@@ -297,6 +297,104 @@ class UserSettingsView(generics.RetrieveUpdateAPIView):
 
         return Response(serializer.data)
 
+class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet для всех продуктов (парфюмы + пигменты)"""
+    permission_classes = [AllowAny]  # Публичный доступ
+    filter_backends = ([DjangoFilterBackend] if DjangoFilterBackend else []) + [SearchFilter, OrderingFilter]
+    filterset_fields = ['brand', 'category', 'in_stock'] if not FilterSet else None
+    search_fields = ['name', 'brand__name', 'category__name', 'description']
+    ordering_fields = ['price', 'created_at', 'name', 'brand__name']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        """Объединяем парфюмы и пигменты в один queryset"""
+        from django.db.models import Q
+
+        # Получаем все парфюмы с типом 'perfume'
+        perfumes = Perfume.objects.select_related('brand', 'category').annotate(
+            product_type=models.Value('perfume', output_field=models.CharField()),
+            gender_value=models.F('gender'),
+            volume_value=models.F('volume_ml'),
+            weight_value=models.Value(None, output_field=models.DecimalField(max_digits=10, decimal_places=2)),
+            color_type_value=models.Value(None, output_field=models.CharField()),
+            application_type_value=models.Value(None, output_field=models.CharField()),
+        )
+
+        # Получаем все пигменты с типом 'pigment'
+        pigments = Pigment.objects.select_related('brand', 'category').annotate(
+            product_type=models.Value('pigment', output_field=models.CharField()),
+            gender_value=models.Value(None, output_field=models.CharField()),
+            volume_value=models.Value(None, output_field=models.PositiveIntegerField()),
+            weight_value=models.F('weight_gr'),
+            color_type_value=models.F('color_type'),
+            application_type_value=models.F('application_type'),
+        )
+
+        # Объединяем queryset'ы
+        combined_queryset = perfumes.union(pigments)
+
+        # Применяем фильтры
+        brand = self.request.query_params.get('brand')
+        if brand:
+            combined_queryset = combined_queryset.filter(brand=brand)
+
+        category = self.request.query_params.get('category')
+        if category:
+            combined_queryset = combined_queryset.filter(category=category)
+
+        in_stock = self.request.query_params.get('in_stock')
+        if in_stock is not None:
+            combined_queryset = combined_queryset.filter(in_stock=in_stock.lower() == 'true')
+
+        search = self.request.query_params.get('search')
+        if search:
+            combined_queryset = combined_queryset.filter(
+                Q(name__icontains=search) |
+                Q(brand__name__icontains=search) |
+                Q(category__name__icontains=search) |
+                Q(description__icontains=search)
+            )
+
+        # Применяем сортировку
+        ordering = self.request.query_params.get('ordering', '-created_at')
+        if ordering:
+            combined_queryset = combined_queryset.order_by(ordering)
+
+        return combined_queryset
+
+    def get_serializer_class(self):
+        # Для простоты используем PerfumeListSerializer, но нужно создать универсальный
+        return PerfumeListSerializer
+
+    def list(self, request, *args, **kwargs):
+        """Получить список всех продуктов"""
+        queryset = self.get_queryset()
+
+        # Пагинация
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            # Для каждой записи создаем подходящий объект
+            serialized_data = []
+            for item in page:
+                if hasattr(item, 'gender'):  # Это парфюм
+                    serializer = PerfumeListSerializer(item)
+                else:  # Это пигмент
+                    serializer = PigmentListSerializer(item)
+                serialized_data.append(serializer.data)
+
+            return self.get_paginated_response(serialized_data)
+
+        # Без пагинации
+        serialized_data = []
+        for item in queryset:
+            if hasattr(item, 'gender'):  # Это парфюм
+                serializer = PerfumeListSerializer(item)
+            else:  # Это пигмент
+                serializer = PigmentListSerializer(item)
+            serialized_data.append(serializer.data)
+
+        return Response(serialized_data)
+
 # Представления для магазина
 
 class CartView(generics.RetrieveAPIView):
