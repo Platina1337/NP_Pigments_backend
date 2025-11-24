@@ -307,60 +307,8 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Объединяем парфюмы и пигменты в один queryset"""
-        from django.db.models import Q
-
-        # Получаем все парфюмы с типом 'perfume'
-        perfumes = Perfume.objects.select_related('brand', 'category').annotate(
-            product_type=models.Value('perfume', output_field=models.CharField()),
-            gender_value=models.F('gender'),
-            volume_value=models.F('volume_ml'),
-            weight_value=models.Value(None, output_field=models.DecimalField(max_digits=10, decimal_places=2)),
-            color_type_value=models.Value(None, output_field=models.CharField()),
-            application_type_value=models.Value(None, output_field=models.CharField()),
-        )
-
-        # Получаем все пигменты с типом 'pigment'
-        pigments = Pigment.objects.select_related('brand', 'category').annotate(
-            product_type=models.Value('pigment', output_field=models.CharField()),
-            gender_value=models.Value(None, output_field=models.CharField()),
-            volume_value=models.Value(None, output_field=models.PositiveIntegerField()),
-            weight_value=models.F('weight_gr'),
-            color_type_value=models.F('color_type'),
-            application_type_value=models.F('application_type'),
-        )
-
-        # Объединяем queryset'ы
-        combined_queryset = perfumes.union(pigments)
-
-        # Применяем фильтры
-        brand = self.request.query_params.get('brand')
-        if brand:
-            combined_queryset = combined_queryset.filter(brand=brand)
-
-        category = self.request.query_params.get('category')
-        if category:
-            combined_queryset = combined_queryset.filter(category=category)
-
-        in_stock = self.request.query_params.get('in_stock')
-        if in_stock is not None:
-            combined_queryset = combined_queryset.filter(in_stock=in_stock.lower() == 'true')
-
-        search = self.request.query_params.get('search')
-        if search:
-            combined_queryset = combined_queryset.filter(
-                Q(name__icontains=search) |
-                Q(brand__name__icontains=search) |
-                Q(category__name__icontains=search) |
-                Q(description__icontains=search)
-            )
-
-        # Применяем сортировку
-        ordering = self.request.query_params.get('ordering', '-created_at')
-        if ordering:
-            combined_queryset = combined_queryset.order_by(ordering)
-
-        return combined_queryset
+        """Возвращаем пустой queryset, так как используем кастомный list метод"""
+        return Perfume.objects.none()
 
     def get_serializer_class(self):
         # Для простоты используем PerfumeListSerializer, но нужно создать универсальный
@@ -368,32 +316,94 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     def list(self, request, *args, **kwargs):
         """Получить список всех продуктов"""
-        queryset = self.get_queryset()
+        # Получаем все парфюмы
+        perfumes = Perfume.objects.select_related('brand', 'category').filter(in_stock=True)
+        # Получаем все пигменты
+        pigments = Pigment.objects.select_related('brand', 'category').filter(in_stock=True)
+
+        # Применяем фильтры к обоим queryset'ам
+        brand = request.query_params.get('brand')
+        category = request.query_params.get('category')
+        search = request.query_params.get('search')
+
+        if brand:
+            perfumes = perfumes.filter(brand=brand)
+            pigments = pigments.filter(brand=brand)
+
+        if category:
+            perfumes = perfumes.filter(category=category)
+            pigments = pigments.filter(category=category)
+
+        if search:
+            from django.db.models import Q
+            perfumes = perfumes.filter(
+                Q(name__icontains=search) |
+                Q(brand__name__icontains=search) |
+                Q(category__name__icontains=search) |
+                Q(description__icontains=search)
+            )
+            pigments = pigments.filter(
+                Q(name__icontains=search) |
+                Q(brand__name__icontains=search) |
+                Q(category__name__icontains=search) |
+                Q(description__icontains=search)
+            )
+
+        # Объединяем результаты в один список
+        products = []
+
+        # Преобразуем парфюмы в общий формат
+        for perfume in perfumes:
+            products.append({
+                'id': perfume.id,
+                'name': perfume.name,
+                'brand_name': perfume.brand.name,
+                'category_name': perfume.category.name,
+                'price': perfume.price,
+                'in_stock': perfume.in_stock,
+                'image': perfume.image.url if perfume.image else None,
+                'product_type': 'perfume',
+                'gender': perfume.get_gender_display(),
+                'volume_ml': perfume.volume_ml,
+            })
+
+        # Преобразуем пигменты в общий формат
+        for pigment in pigments:
+            products.append({
+                'id': pigment.id,
+                'name': pigment.name,
+                'brand_name': pigment.brand.name,
+                'category_name': pigment.category.name,
+                'price': pigment.price,
+                'in_stock': pigment.in_stock,
+                'image': pigment.image.url if pigment.image else None,
+                'product_type': 'pigment',
+                'color_type': pigment.get_color_type_display(),
+                'weight_gr': pigment.weight_gr,
+            })
+
+        # Применяем сортировку
+        ordering = request.query_params.get('ordering', '-created_at')
+        if ordering == 'price':
+            products.sort(key=lambda x: x['price'])
+        elif ordering == '-price':
+            products.sort(key=lambda x: x['price'], reverse=True)
+        elif ordering == 'name':
+            products.sort(key=lambda x: x['name'])
+        elif ordering == '-name':
+            products.sort(key=lambda x: x['name'], reverse=True)
+        else:  # -created_at or other
+            # Для простоты оставляем порядок как есть (можно улучшить)
+            pass
 
         # Пагинация
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            # Для каждой записи создаем подходящий объект
-            serialized_data = []
-            for item in page:
-                if hasattr(item, 'gender'):  # Это парфюм
-                    serializer = PerfumeListSerializer(item)
-                else:  # Это пигмент
-                    serializer = PigmentListSerializer(item)
-                serialized_data.append(serializer.data)
+        from rest_framework.pagination import PageNumberPagination
+        paginator = PageNumberPagination()
+        paginator.page_size = request.query_params.get('page_size', 20)
 
-            return self.get_paginated_response(serialized_data)
+        paginated_products = paginator.paginate_queryset(products, request)
 
-        # Без пагинации
-        serialized_data = []
-        for item in queryset:
-            if hasattr(item, 'gender'):  # Это парфюм
-                serializer = PerfumeListSerializer(item)
-            else:  # Это пигмент
-                serializer = PigmentListSerializer(item)
-            serialized_data.append(serializer.data)
-
-        return Response(serialized_data)
+        return paginator.get_paginated_response(paginated_products)
 
 # Представления для магазина
 
