@@ -1,0 +1,486 @@
+[
+  {
+    "model": "store.brand",
+    "pk": 1,
+    "fields": {
+      "name": "Chanel",
+      "description": "Французский дом моды и парфюмерии",
+      "country": "Франция",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.brand",
+    "pk": 2,
+    "fields": {
+      "name": "Dior",
+      "description": "Роскошный французский бренд",
+      "country": "Франция",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.brand",
+    "pk": 3,
+    "fields": {
+      "name": "Gucci",
+      "description": "Итальянский дом моды",
+      "country": "Италия",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.brand",
+    "pk": 4,
+    "fields": {
+      "name": "Louis Vuitton",
+      "description": "Французский дом роскошных товаров",
+      "country": "Франция",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.brand",
+    "pk": 5,
+    "fields": {
+      "name": "Yves Saint Laurent",
+      "description": "Французский дом моды и парфюмерии",
+      "country": "Франция",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.brand",
+    "pk": 6,
+    "fields": {
+      "name": "Versace",
+      "description": "Итальянский дом моды",
+      "country": "Италия",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 1,
+    "fields": {
+      "name": "Цветочные",
+      "description": "Нежные и романтичные ароматы",
+      "category_type": "perfume",
+      "icon": "🌸",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 2,
+    "fields": {
+      "name": "Древесные",
+      "description": "Свежие и элегантные композиции",
+      "category_type": "perfume",
+      "icon": "🌲",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 3,
+    "fields": {
+      "name": "Фруктовые",
+      "description": "Яркие и жизнерадостные ароматы",
+      "category_type": "perfume",
+      "icon": "🍊",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 4,
+    "fields": {
+      "name": "Восточные",
+      "description": "Таинственные и экзотические ноты",
+      "category_type": "perfume",
+      "icon": "🌙",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 5,
+    "fields": {
+      "name": "Косметические пигменты",
+      "description": "Пигменты для декоративной косметики",
+      "category_type": "pigment",
+      "icon": "💄",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 6,
+    "fields": {
+      "name": "Художественные пигменты",
+      "description": "Пигменты для живописи и искусства",
+      "category_type": "pigment",
+      "icon": "🎨",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 7,
+    "fields": {
+      "name": "Промышленные пигменты",
+      "description": "Пигменты для промышленного применения",
+      "category_type": "pigment",
+      "icon": "🏭",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.category",
+    "pk": 8,
+    "fields": {
+      "name": "Пищевые красители",
+      "description": "Натуральные и синтетические пищевые красители",
+      "category_type": "pigment",
+      "icon": "🍬",
+      "created_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 1,
+    "fields": {
+      "name": "Chanel №5",
+      "brand": 1,
+      "category": 1,
+      "description": "Легендарный аромат Chanel №5 - классика парфюмерии",
+      "gender": "F",
+      "price": "12500.00",
+      "volume_ml": 100,
+      "concentration": "Eau de Parfum",
+      "top_notes": "Нероли, иланг-иланг, лимон",
+      "heart_notes": "Жасмин, роза, ирис",
+      "base_notes": "Ваниль, пачули, амбра",
+      "in_stock": true,
+      "stock_quantity": 25,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 2,
+    "fields": {
+      "name": "Dior Addict",
+      "brand": 2,
+      "category": 1,
+      "description": "Очаровательный цветочный аромат с нотами мандарина",
+      "gender": "F",
+      "price": "8900.00",
+      "volume_ml": 50,
+      "concentration": "Eau de Toilette",
+      "top_notes": "Мандарин, апельсин",
+      "heart_notes": "Жасмин, тубероза",
+      "base_notes": "Ваниль, пачули",
+      "in_stock": true,
+      "stock_quantity": 15,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 3,
+    "fields": {
+      "name": "Gucci Guilty",
+      "brand": 3,
+      "category": 2,
+      "description": "Современный аромат с древесными и цветочными нотами",
+      "gender": "U",
+      "price": "7200.00",
+      "volume_ml": 75,
+      "concentration": "Eau de Toilette",
+      "top_notes": "Розовый перец, лаванда",
+      "heart_notes": "Лилия долины, фиалка",
+      "base_notes": "Пачули, амбра",
+      "in_stock": true,
+      "stock_quantity": 30,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 4,
+    "fields": {
+      "name": "Louis Vuitton Afternoon Swim",
+      "brand": 4,
+      "category": 3,
+      "description": "Свежий фруктовый аромат с акватическими нотами",
+      "gender": "U",
+      "price": "9500.00",
+      "volume_ml": 100,
+      "concentration": "Eau de Toilette",
+      "top_notes": "Бергамот, лимон, грейпфрут",
+      "heart_notes": "Морские ноты, жасмин",
+      "base_notes": "Мускус, амбра",
+      "in_stock": true,
+      "stock_quantity": 20,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 5,
+    "fields": {
+      "name": "YSL Black Opium",
+      "brand": 5,
+      "category": 4,
+      "description": "Восточный аромат с нотами кофе и ванили",
+      "gender": "F",
+      "price": "6800.00",
+      "volume_ml": 50,
+      "concentration": "Eau de Parfum",
+      "top_notes": "Кофе, перец",
+      "heart_notes": "Жасмин, жимолость",
+      "base_notes": "Ваниль, пачули",
+      "in_stock": true,
+      "stock_quantity": 18,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 6,
+    "fields": {
+      "name": "Versace Eros",
+      "brand": 6,
+      "category": 2,
+      "description": "Древесный аромат с нотами мяты и тоскани",
+      "gender": "M",
+      "price": "5500.00",
+      "volume_ml": 100,
+      "concentration": "Eau de Toilette",
+      "top_notes": "Мята, лимон",
+      "heart_notes": "Тоскани, герань",
+      "base_notes": "Сандаловое дерево, амбра",
+      "in_stock": true,
+      "stock_quantity": 22,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 7,
+    "fields": {
+      "name": "Chanel Bleu de Chanel",
+      "brand": 1,
+      "category": 2,
+      "description": "Элегантный мужской аромат с древесными нотами",
+      "gender": "M",
+      "price": "11200.00",
+      "volume_ml": 100,
+      "concentration": "Eau de Parfum",
+      "top_notes": "Грейпфрут, лимон, миндаль",
+      "heart_notes": "Жасмин, ирис",
+      "base_notes": "Сандаловое дерево, пачули, лабданум",
+      "in_stock": true,
+      "stock_quantity": 12,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.perfume",
+    "pk": 8,
+    "fields": {
+      "name": "Dior Sauvage",
+      "brand": 2,
+      "category": 2,
+      "description": "Свежий древесный аромат с акватическими нотами",
+      "gender": "M",
+      "price": "7800.00",
+      "volume_ml": 60,
+      "concentration": "Eau de Toilette",
+      "top_notes": "Перец, бергамот",
+      "heart_notes": "Лаванда, пачули",
+      "base_notes": "Кедр, амбра",
+      "in_stock": true,
+      "stock_quantity": 28,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 1,
+    "fields": {
+      "name": "Перламутровый пигмент Gold Pearl",
+      "brand": 1,
+      "category": 5,
+      "description": "Высококачественный перламутровый пигмент золотистого оттенка для декоративной косметики",
+      "color_code": "GP-001",
+      "color_type": "powder",
+      "application_type": "cosmetics",
+      "price": "1200.00",
+      "weight_gr": 10,
+      "in_stock": true,
+      "stock_quantity": 45,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 2,
+    "fields": {
+      "name": "Ультрамарин синий",
+      "brand": 2,
+      "category": 6,
+      "description": "Классический синий пигмент для художественной живописи",
+      "color_code": "PB29",
+      "color_type": "powder",
+      "application_type": "art",
+      "price": "850.00",
+      "weight_gr": 50,
+      "in_stock": true,
+      "stock_quantity": 30,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 3,
+    "fields": {
+      "name": "Жидкий пигмент Ruby Red",
+      "brand": 3,
+      "category": 5,
+      "description": "Яркий красный жидкий пигмент для теней и помад",
+      "color_code": "LR-100",
+      "color_type": "liquid",
+      "application_type": "cosmetics",
+      "price": "950.00",
+      "weight_gr": 15,
+      "in_stock": true,
+      "stock_quantity": 25,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 4,
+    "fields": {
+      "name": "Титановый диоксид",
+      "brand": 4,
+      "category": 7,
+      "description": "Белый пигмент для промышленного применения",
+      "color_code": "TiO2-W",
+      "color_type": "powder",
+      "application_type": "industrial",
+      "price": "650.00",
+      "weight_gr": 100,
+      "in_stock": true,
+      "stock_quantity": 80,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 5,
+    "fields": {
+      "name": "Натуральный краситель куркума",
+      "brand": 5,
+      "category": 8,
+      "description": "Натуральный желтый пищевой краситель из куркумы",
+      "color_code": "FD-Y-001",
+      "color_type": "powder",
+      "application_type": "food",
+      "price": "420.00",
+      "weight_gr": 25,
+      "in_stock": true,
+      "stock_quantity": 60,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 6,
+    "fields": {
+      "name": "Металлик серебро",
+      "brand": 6,
+      "category": 5,
+      "description": "Металлический серебряный пигмент для декоративной косметики",
+      "color_code": "MS-200",
+      "color_type": "powder",
+      "application_type": "cosmetics",
+      "price": "1350.00",
+      "weight_gr": 8,
+      "in_stock": true,
+      "stock_quantity": 35,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 7,
+    "fields": {
+      "name": "Кадмий красный",
+      "brand": 1,
+      "category": 6,
+      "description": "Яркий красный пигмент для художественной живописи",
+      "color_code": "PR108",
+      "color_type": "powder",
+      "application_type": "art",
+      "price": "980.00",
+      "weight_gr": 30,
+      "in_stock": true,
+      "stock_quantity": 20,
+      "featured": true,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  },
+  {
+    "model": "store.pigment",
+    "pk": 8,
+    "fields": {
+      "name": "Органический черный",
+      "brand": 2,
+      "category": 7,
+      "description": "Чёрный органический пигмент для промышленного применения",
+      "color_code": "PBK-007",
+      "color_type": "powder",
+      "application_type": "industrial",
+      "price": "720.00",
+      "weight_gr": 75,
+      "in_stock": true,
+      "stock_quantity": 50,
+      "featured": false,
+      "created_at": "2025-01-01T00:00:00Z",
+      "updated_at": "2025-01-01T00:00:00Z"
+    }
+  }
+]
