@@ -19,7 +19,23 @@ except ImportError:
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.contrib.auth.models import User
 from django.db import models
-from .models import Brand, Category, Perfume, Pigment, UserProfile, UserSettings, Cart, CartItem, Order, OrderItem, EmailOTP
+from django.shortcuts import get_object_or_404
+import logging
+from .models import (
+    Brand,
+    Category,
+    Perfume,
+    Pigment,
+    UserProfile,
+    UserSettings,
+    Cart,
+    CartItem,
+    Order,
+    OrderItem,
+    EmailOTP,
+    Wishlist,
+    WishlistItem,
+)
 from .serializers import (
     BrandSerializer, CategorySerializer,
     PerfumeSerializer, PerfumeListSerializer,
@@ -27,8 +43,11 @@ from .serializers import (
     UserRegistrationSerializer, UserSerializer, CustomTokenObtainPairSerializer,
     UserProfileSerializer, UserSettingsSerializer,
     CartSerializer, CartItemSerializer, OrderSerializer, OrderCreateSerializer,
-    EmailOTPSerializer, EmailOTPVerifySerializer
+    EmailOTPSerializer, EmailOTPVerifySerializer,
+    WishlistSerializer, WishlistItemSerializer
 )
+
+logger = logging.getLogger(__name__)
 
 class BrandViewSet(viewsets.ModelViewSet):
     """ViewSet для брендов"""
@@ -249,6 +268,17 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """Кастомное представление для получения JWT токенов"""
     serializer_class = CustomTokenObtainPairSerializer
 
+    def post(self, request, *args, **kwargs):
+        identifier = request.data.get('username') or request.data.get('email') or '<unknown>'
+        logger.info('AUTH_ATTEMPT username_or_email=%s ip=%s', identifier, request.META.get('REMOTE_ADDR'))
+        try:
+            response = super().post(request, *args, **kwargs)
+            logger.info('AUTH_SUCCESS username_or_email=%s status=%s', identifier, response.status_code)
+            return response
+        except Exception as exc:
+            logger.warning('AUTH_FAILED username_or_email=%s reason=%s', identifier, exc)
+            raise
+
 class UserProfileView(generics.RetrieveUpdateAPIView):
     """Представление для профиля пользователя"""
     serializer_class = UserSerializer
@@ -355,7 +385,8 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         # Преобразуем парфюмы в общий формат
         for perfume in perfumes:
             products.append({
-                'id': perfume.id,
+                'id': f'perfume_{perfume.id}',  # Уникальный id с типом продукта
+                'original_id': perfume.id,  # Сохраняем оригинальный id для ссылок
                 'name': perfume.name,
                 'brand_name': perfume.brand.name,
                 'category_name': perfume.category.name,
@@ -370,7 +401,8 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         # Преобразуем пигменты в общий формат
         for pigment in pigments:
             products.append({
-                'id': pigment.id,
+                'id': f'pigment_{pigment.id}',  # Уникальный id с типом продукта
+                'original_id': pigment.id,  # Сохраняем оригинальный id для ссылок
                 'name': pigment.name,
                 'brand_name': pigment.brand.name,
                 'category_name': pigment.category.name,
@@ -414,6 +446,7 @@ class CartView(generics.RetrieveAPIView):
 
     def get_object(self):
         cart, created = Cart.objects.get_or_create(user=self.request.user)
+        print(f"CartView GET for user {self.request.user.username}: created={created}, items={cart.items.count()}")
         return cart
 
 class CartItemViewSet(viewsets.ModelViewSet):
@@ -487,6 +520,142 @@ class CartItemViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(item)
         return Response(serializer.data)
+
+class WishlistView(generics.RetrieveAPIView):
+    """Представление для списка избранного пользователя"""
+    serializer_class = WishlistSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        wishlist, created = Wishlist.objects.get_or_create(user=self.request.user)
+        return wishlist
+
+class WishlistItemViewSet(viewsets.ModelViewSet):
+    """ViewSet для элементов избранного"""
+    serializer_class = WishlistItemSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return WishlistItem.objects.filter(wishlist__user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        product_type = request.data.get('product_type')
+        product_id = request.data.get('product_id')
+
+        if not product_type or not product_id:
+            return Response(
+                {'error': 'Необходимо указать product_type и product_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        wishlist, created = Wishlist.objects.get_or_create(user=request.user)
+
+        item_kwargs = {'wishlist': wishlist}
+        if product_type == 'perfume':
+            item_kwargs['perfume'] = get_object_or_404(Perfume, id=product_id)
+            item_kwargs['pigment'] = None
+        elif product_type == 'pigment':
+            item_kwargs['pigment'] = get_object_or_404(Pigment, id=product_id)
+            item_kwargs['perfume'] = None
+        else:
+            return Response(
+                {'error': 'Недопустимый product_type'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        item, created = WishlistItem.objects.get_or_create(**item_kwargs)
+        serializer = self.get_serializer(item)
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'])
+    def status(self, request):
+        """Проверить, находится ли товар в избранном"""
+        product_type = request.query_params.get('product_type')
+        product_id = request.query_params.get('product_id')
+
+        if not product_type or not product_id:
+            return Response(
+                {'error': 'Необходимо указать product_type и product_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        filters = {}
+        if product_type == 'perfume':
+            filters['perfume_id'] = product_id
+        elif product_type == 'pigment':
+            filters['pigment_id'] = product_id
+        else:
+            return Response(
+                {'error': 'Недопустимый product_type'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        item = self.get_queryset().filter(**filters).first()
+        return Response({
+            'is_favorite': bool(item),
+            'item_id': item.id if item else None,
+        })
+
+    @action(detail=False, methods=['delete'], url_path='by-product')
+    def remove_by_product(self, request):
+        """Удалить товар из избранного по типу и ID"""
+        product_type = request.query_params.get('product_type') or request.data.get('product_type')
+        product_id = request.query_params.get('product_id') or request.data.get('product_id')
+
+        if not product_type or not product_id:
+            return Response(
+                {'error': 'Необходимо указать product_type и product_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        filters = {}
+        if product_type == 'perfume':
+            filters['perfume_id'] = product_id
+        elif product_type == 'pigment':
+            filters['pigment_id'] = product_id
+        else:
+            return Response(
+                {'error': 'Недопустимый product_type'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        deleted, _ = self.get_queryset().filter(**filters).delete()
+        return Response({'removed': bool(deleted)})
+
+    @action(detail=False, methods=['post'], url_path='bulk-add')
+    def bulk_add(self, request):
+        """Массовое добавление товаров в избранное (для синхронизации)"""
+        items = request.data.get('items', [])
+        if not isinstance(items, list):
+            return Response({'error': 'items должен быть списком'}, status=status.HTTP_400_BAD_REQUEST)
+
+        wishlist, created = Wishlist.objects.get_or_create(user=request.user)
+        created_count = 0
+
+        for item_data in items:
+            product_type = item_data.get('product_type')
+            product_id = item_data.get('product_id')
+            if not product_type or not product_id:
+                continue
+
+            item_kwargs = {'wishlist': wishlist}
+            try:
+                if product_type == 'perfume':
+                    item_kwargs['perfume'] = Perfume.objects.get(id=product_id)
+                    item_kwargs['pigment'] = None
+                elif product_type == 'pigment':
+                    item_kwargs['pigment'] = Pigment.objects.get(id=product_id)
+                    item_kwargs['perfume'] = None
+                else:
+                    continue
+            except (Perfume.DoesNotExist, Pigment.DoesNotExist):
+                continue
+
+            _, created_flag = WishlistItem.objects.get_or_create(**item_kwargs)
+            if created_flag:
+                created_count += 1
+
+        return Response({'created': created_count})
 
 class OrderViewSet(viewsets.ModelViewSet):
     """ViewSet для заказов"""
@@ -1251,40 +1420,87 @@ def get_tracking_info(request, tracking_number):
 def sync_cart(request):
     """Синхронизация корзины клиента с сервером"""
     items = request.data.get('items', [])
-    
+    print(f"Sync cart for user {request.user.username}: {len(items)} items")
+    print(f"Items data: {items}")
+
     # Получаем или создаем корзину
     cart, created = Cart.objects.get_or_create(user=request.user)
-    
-    # Очищаем текущую корзину
-    cart.items.all().delete()
-    
-    # Добавляем товары из запроса
+    print(f"Cart created: {created}, current items: {cart.items.count()}")
+
+    # Создаем словарь текущих элементов корзины для быстрого поиска
+    existing_items = {}
+    for item in cart.items.all():
+        key = f"{item.product_type}-{item.product.id}"
+        existing_items[key] = item
+
+    # Обрабатываем товары из запроса
     for item_data in items:
         product_type = item_data.get('product_type')  # 'perfume' или 'pigment'
         product_id = item_data.get('product_id')
         quantity = item_data.get('quantity', 1)
-        
-        if product_type == 'perfume':
+
+        print(f"Processing item: type={product_type}, id={product_id}, qty={quantity}")
+
+        key = f"{product_type}-{product_id}"
+
+        if key in existing_items:
+            # Обновляем количество существующего товара
+            existing_item = existing_items[key]
+            print(f"Updating existing item {existing_item.id}, old qty: {existing_item.quantity}, new qty: {quantity}")
+            existing_item.quantity = quantity
             try:
-                perfume = Perfume.objects.get(id=product_id)
-                CartItem.objects.create(
-                    cart=cart,
-                    perfume=perfume,
-                    quantity=quantity
-                )
-            except Perfume.DoesNotExist:
-                pass
-        elif product_type == 'pigment':
-            try:
-                pigment = Pigment.objects.get(id=product_id)
-                CartItem.objects.create(
-                    cart=cart,
-                    pigment=pigment,
-                    quantity=quantity
-                )
-            except Pigment.DoesNotExist:
-                pass
-    
+                existing_item.save()
+                print(f"Successfully saved item {existing_item.id} with quantity {quantity}")
+            except Exception as e:
+                print(f"Error saving item {existing_item.id}: {e}")
+            del existing_items[key]  # Удаляем из словаря обработанных
+        else:
+            # Добавляем новый товар
+            print(f"Adding new item: type={product_type}, id={product_id}")
+            if product_type == 'perfume':
+                try:
+                    perfume = Perfume.objects.get(id=product_id)
+                    print(f"Found perfume: {perfume.name}")
+                    new_item = CartItem.objects.create(
+                        cart=cart,
+                        perfume=perfume,
+                        quantity=quantity
+                    )
+                    print(f"Created cart item: {new_item.id}")
+                    # Проверяем, что элемент действительно сохранен
+                    saved_item = CartItem.objects.get(id=new_item.id)
+                    print(f"Verified saved item: {saved_item.id}, qty: {saved_item.quantity}")
+                except Perfume.DoesNotExist as e:
+                    print(f"Perfume {product_id} not found: {e}")
+                    pass
+                except Exception as e:
+                    print(f"Error creating perfume cart item: {e}")
+            elif product_type == 'pigment':
+                try:
+                    pigment = Pigment.objects.get(id=product_id)
+                    print(f"Found pigment: {pigment.name}")
+                    new_item = CartItem.objects.create(
+                        cart=cart,
+                        pigment=pigment,
+                        quantity=quantity
+                    )
+                    print(f"Created cart item: {new_item.id}")
+                except Pigment.DoesNotExist as e:
+                    print(f"Pigment {product_id} not found: {e}")
+                    pass
+                except Exception as e:
+                    print(f"Error creating pigment cart item: {e}")
+            else:
+                print(f"Unknown product type: {product_type}")
+
+    # Удаляем товары, которые не пришли в запросе (были удалены на клиенте)
+    print(f"Removing {len(existing_items)} items that are no longer in cart")
+    for remaining_item in existing_items.values():
+        print(f"Deleting cart item {remaining_item.id}")
+        remaining_item.delete()
+
     # Возвращаем обновленную корзину
     serializer = CartSerializer(cart)
+    print(f"Sync completed. Final cart items: {cart.items.count()}")
+    print(f"Response data: {serializer.data}")
     return Response(serializer.data)

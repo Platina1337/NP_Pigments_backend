@@ -2,7 +2,85 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Brand, Category, Perfume, Pigment, UserProfile, UserSettings, Cart, CartItem, Order, OrderItem, EmailOTP
+from .models import (
+    Brand,
+    Category,
+    Perfume,
+    Pigment,
+    UserProfile,
+    UserSettings,
+    Cart,
+    CartItem,
+    Order,
+    OrderItem,
+    EmailOTP,
+    ProductImage,
+    Wishlist,
+    WishlistItem,
+)
+
+def serialize_product_payload(product):
+    """Возвращает базовое описание продукта для фронтенда"""
+    if not product:
+        return None
+
+    base = {
+        'id': product.id,
+        'name': product.name,
+        'description': product.description,
+        'price': str(product.price),
+        'image': product.image.url if getattr(product, 'image', None) else None,
+        'in_stock': product.in_stock,
+        'stock_quantity': product.stock_quantity,
+        'created_at': product.created_at.isoformat() if product.created_at else None,
+        'updated_at': product.updated_at.isoformat() if product.updated_at else None,
+        'brand': {
+            'id': product.brand.id,
+            'name': product.brand.name,
+            'description': product.brand.description,
+            'country': product.brand.country,
+            'created_at': product.brand.created_at.isoformat() if product.brand.created_at else None,
+        } if getattr(product, 'brand', None) else None,
+        'category': {
+            'id': product.category.id,
+            'name': product.category.name,
+            'description': product.category.description,
+            'category_type': getattr(product.category, 'category_type', None),
+            'created_at': product.category.created_at.isoformat() if product.category.created_at else None,
+        } if getattr(product, 'category', None) else None,
+    }
+
+    if isinstance(product, Perfume):
+        base.update({
+            'product_type': 'perfume',
+            'gender': product.gender,
+            'volume_ml': product.volume_ml,
+            'concentration': product.concentration,
+            'top_notes': product.top_notes,
+            'heart_notes': product.heart_notes,
+            'base_notes': product.base_notes,
+        })
+    else:
+        base.update({
+            'product_type': 'pigment',
+            'gender': 'U',
+            'volume_ml': product.weight_gr,
+            'weight_gr': product.weight_gr,
+            'color_type': product.color_type,
+            'application_type': product.application_type,
+            'concentration': '',
+            'top_notes': '',
+            'heart_notes': '',
+            'base_notes': '',
+        })
+
+    return base
+
+class ProductImageSerializer(serializers.ModelSerializer):
+    """Сериализатор для изображений продукта"""
+    class Meta:
+        model = ProductImage
+        fields = ['id', 'image', 'alt_text']
 
 class BrandSerializer(serializers.ModelSerializer):
     """Сериализатор для бренда"""
@@ -20,6 +98,7 @@ class PerfumeSerializer(serializers.ModelSerializer):
     """Сериализатор для парфюма"""
     brand = BrandSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
     brand_id = serializers.IntegerField(write_only=True)
     category_id = serializers.IntegerField(write_only=True)
 
@@ -28,7 +107,7 @@ class PerfumeSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'brand', 'category', 'brand_id', 'category_id',
             'description', 'gender', 'price', 'volume_ml', 'concentration',
-            'top_notes', 'heart_notes', 'base_notes', 'image', 'in_stock',
+            'top_notes', 'heart_notes', 'base_notes', 'image', 'images', 'in_stock',
             'stock_quantity', 'featured', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
@@ -49,6 +128,7 @@ class PigmentSerializer(serializers.ModelSerializer):
     """Сериализатор для пигмента"""
     brand = BrandSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
     brand_id = serializers.IntegerField(write_only=True)
     category_id = serializers.IntegerField(write_only=True)
 
@@ -57,7 +137,7 @@ class PigmentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'brand', 'category', 'brand_id', 'category_id',
             'description', 'color_code', 'color_type', 'application_type',
-            'price', 'weight_gr', 'image', 'in_stock', 'stock_quantity',
+            'price', 'weight_gr', 'image', 'images', 'in_stock', 'stock_quantity',
             'featured', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
@@ -196,6 +276,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
+        username_value = attrs.get(self.username_field)
+        if username_value:
+            normalized = username_value.strip()
+            if '@' in normalized:
+                try:
+                    user = User.objects.get(email__iexact=normalized)
+                    attrs[self.username_field] = user.username
+                except User.DoesNotExist:
+                    attrs[self.username_field] = normalized
+            else:
+                try:
+                    user = User.objects.get(username__iexact=normalized)
+                    attrs[self.username_field] = user.username
+                except User.DoesNotExist:
+                    attrs[self.username_field] = normalized
+
         data = super().validate(attrs)
 
         # Добавляем информацию о пользователе в ответ
@@ -234,11 +330,23 @@ class CartItemSerializer(serializers.ModelSerializer):
     product_type = serializers.SerializerMethodField()
     unit_price = serializers.SerializerMethodField()
     total_price = serializers.SerializerMethodField()
+    product_data = serializers.SerializerMethodField()
 
     class Meta:
         model = CartItem
-        fields = ['id', 'perfume', 'pigment', 'quantity', 'product_name', 'product_image',
-                 'product_type', 'unit_price', 'total_price', 'added_at']
+        fields = [
+            'id',
+            'perfume',
+            'pigment',
+            'quantity',
+            'product_name',
+            'product_image',
+            'product_type',
+            'unit_price',
+            'total_price',
+            'added_at',
+            'product_data',
+        ]
         read_only_fields = ['id', 'added_at']
 
     def get_product_name(self, obj):
@@ -256,6 +364,9 @@ class CartItemSerializer(serializers.ModelSerializer):
     def get_total_price(self, obj):
         return obj.total_price
 
+    def get_product_data(self, obj):
+        return serialize_product_payload(obj.product)
+
 class CartSerializer(serializers.ModelSerializer):
     """Сериализатор для корзины"""
     items = CartItemSerializer(many=True, read_only=True)
@@ -272,6 +383,62 @@ class CartSerializer(serializers.ModelSerializer):
 
     def get_total_price(self, obj):
         return obj.total_price
+
+class WishlistItemSerializer(serializers.ModelSerializer):
+    """Сериализатор для элемента избранного"""
+    product_type = serializers.SerializerMethodField()
+    product_name = serializers.SerializerMethodField()
+    product_image = serializers.SerializerMethodField()
+    product_price = serializers.SerializerMethodField()
+    product_data = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WishlistItem
+        fields = [
+            'id',
+            'perfume',
+            'pigment',
+            'product_type',
+            'product_name',
+            'product_image',
+            'product_price',
+            'product_data',
+            'added_at',
+        ]
+        read_only_fields = ['id', 'added_at']
+
+    def get_product_type(self, obj):
+        return obj.product_type
+
+    def get_product_name(self, obj):
+        product = obj.product
+        return product.name if product else None
+
+    def get_product_image(self, obj):
+        product = obj.product
+        if product and getattr(product, 'image', None):
+            return product.image.url
+        return None
+
+    def get_product_price(self, obj):
+        product = obj.product
+        return str(product.price) if product else None
+
+    def get_product_data(self, obj):
+        return serialize_product_payload(obj.product)
+
+class WishlistSerializer(serializers.ModelSerializer):
+    """Сериализатор для списка избранного"""
+    items = WishlistItemSerializer(many=True, read_only=True)
+    total_items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Wishlist
+        fields = ['id', 'items', 'total_items', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_total_items(self, obj):
+        return obj.total_items
 
 class OrderItemSerializer(serializers.ModelSerializer):
     """Сериализатор для позиции заказа"""

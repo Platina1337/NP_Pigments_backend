@@ -79,6 +79,7 @@ class Perfume(models.Model):
     def __str__(self):
         return f"{self.brand.name} - {self.name}"
 
+
 class Pigment(models.Model):
     """Модель пигмента"""
     COLOR_TYPES = [
@@ -118,6 +119,28 @@ class Pigment(models.Model):
 
     def __str__(self):
         return f"{self.brand.name} - {self.name}"
+
+
+class ProductImage(models.Model):
+    """Модель для хранения нескольких изображений продукта"""
+    perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE, related_name='images', null=True, blank=True)
+    pigment = models.ForeignKey(Pigment, on_delete=models.CASCADE, related_name='images', null=True, blank=True)
+    image = models.ImageField(upload_to='products/', verbose_name="Изображение")
+    alt_text = models.CharField(max_length=255, blank=True, verbose_name="Альтернативный текст")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Изображение продукта"
+        verbose_name_plural = "Изображения продуктов"
+        ordering = ['created_at']
+
+    def __str__(self):
+        if self.perfume:
+            return f"Image for {self.perfume.name}"
+        if self.pigment:
+            return f"Image for {self.pigment.name}"
+        return "Unassigned Image"
+
 
 class EmailOTP(models.Model):
     """Модель для одноразовых кодов подтверждения по email"""
@@ -223,6 +246,47 @@ def save_user_profile(sender, instance, **kwargs):
         instance.settings.save()
     except:
         pass
+
+class Wishlist(models.Model):
+    """Список избранных товаров пользователя"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='wishlist')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Избранное"
+        verbose_name_plural = "Избранное"
+
+    def __str__(self):
+        return f"Избранное {self.user.username}"
+
+    @property
+    def total_items(self):
+        return self.items.count()
+
+class WishlistItem(models.Model):
+    """Конкретный товар в списке избранного"""
+    wishlist = models.ForeignKey(Wishlist, on_delete=models.CASCADE, related_name='items')
+    perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE, null=True, blank=True)
+    pigment = models.ForeignKey(Pigment, on_delete=models.CASCADE, null=True, blank=True)
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Элемент избранного"
+        verbose_name_plural = "Элементы избранного"
+        unique_together = ['wishlist', 'perfume', 'pigment']
+
+    def __str__(self):
+        product = self.perfume or self.pigment
+        return f"{product.name} в избранном"
+
+    @property
+    def product(self):
+        return self.perfume or self.pigment
+
+    @property
+    def product_type(self):
+        return 'perfume' if self.perfume else 'pigment'
 
 class Cart(models.Model):
     """Корзина пользователя"""
@@ -395,3 +459,9 @@ def create_user_cart(sender, instance, created, **kwargs):
     """Автоматически создавать корзину при создании пользователя"""
     if created:
         Cart.objects.create(user=instance)
+
+@receiver(post_save, sender=User)
+def create_user_wishlist(sender, instance, created, **kwargs):
+    """Автоматически создавать список избранного при создании пользователя"""
+    if created:
+        Wishlist.objects.create(user=instance)

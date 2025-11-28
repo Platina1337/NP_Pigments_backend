@@ -11,6 +11,7 @@ router.register(r'pigments', views.PigmentViewSet)
 router.register(r'products', views.ProductViewSet, basename='product')
 router.register(r'cart-items', views.CartItemViewSet)
 router.register(r'orders', views.OrderViewSet)
+router.register(r'wishlist-items', views.WishlistItemViewSet, basename='wishlist-item')
 
 urlpatterns = [
     path('api/', include(router.urls)),
@@ -26,6 +27,7 @@ urlpatterns = [
 
     # Корзина
     path('api/cart/', views.CartView.as_view(), name='cart'),
+    path('api/wishlist/', views.WishlistView.as_view(), name='wishlist'),
 
     # Тема
     path('api/theme/', views.theme_settings, name='theme-settings'),

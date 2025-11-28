@@ -5,11 +5,29 @@ from django.utils.html import format_html
 from .models import (
     Brand, Category, Perfume, Pigment,
     UserProfile, UserSettings, Cart, CartItem,
-    Order, OrderItem, EmailOTP
+    Order, OrderItem, EmailOTP, ProductImage
 )
 
 
 # Inline админки
+class ProductImageInline(admin.TabularInline):
+    model = ProductImage
+    extra = 1  # Количество пустых форм для загрузки
+    fields = ('image', 'alt_text', 'image_preview')
+    readonly_fields = ('image_preview',)
+
+    def image_preview(self, obj):
+        if obj.image:
+            return format_html('<img src="{}" width="150" style="object-fit: contain;" />', obj.image.url)
+        return "Нет изображения"
+    image_preview.short_description = "Превью"
+
+class PerfumeImageInline(ProductImageInline):
+    fk_name = "perfume"
+    
+class PigmentImageInline(ProductImageInline):
+    fk_name = "pigment"
+
 class UserProfileInline(admin.StackedInline):
     model = UserProfile
     can_delete = False
@@ -140,6 +158,7 @@ class PerfumeAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    inlines = [PerfumeImageInline]
     
     def image_preview(self, obj):
         if obj.image:
@@ -196,6 +215,7 @@ class PigmentAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    inlines = [PigmentImageInline]
     
     def image_preview(self, obj):
         if obj.image:
