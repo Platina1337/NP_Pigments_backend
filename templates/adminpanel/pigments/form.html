@@ -488,8 +488,11 @@
                         <td style="padding: 8px;">{{ wform.stock_quantity }}</td>
                         <td style="padding: 8px; text-align: center;">{{ wform.in_stock }}</td>
                         <td style="padding: 8px; text-align: center;">{{ wform.is_default }}</td>
-                        <td style="padding: 8px; text-align: center;">{% if wform.instance.pk %}{{ wform.DELETE }}{%
-                            endif %}</td>
+                        <td style="padding: 8px; text-align: center;">
+                            {% if wform.instance.pk %}
+                            {{ wform.DELETE }}
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
