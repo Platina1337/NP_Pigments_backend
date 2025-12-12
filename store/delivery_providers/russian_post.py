@@ -134,43 +134,68 @@ class RussianPostProvider:
         Создание заказа на доставку
         
         Args:
-            order_data: данные заказа
+            order_data: данные заказа в формате Почты России API
             
         Returns:
             dict: результат создания заказа
         """
         try:
-            if self.test_mode or not self.token or not self.key:
-                # В тестовом режиме возвращаем мок
-                import random
-                tracking_number = f'RP{random.randint(100000000000, 999999999999)}'
-                
+            # Проверяем наличие учетных данных
+            if not self.token or not self.key:
                 return {
-                    'success': True,
-                    'tracking_number': tracking_number,
-                    'test_mode': True
+                    'success': False,
+                    'error': 'Russian Post credentials not configured. Set RUSSIAN_POST_TOKEN and RUSSIAN_POST_KEY in settings.'
                 }
             
             # Реальное создание заказа через API
             response = requests.post(
                 f"{self.base_url}user/shipment",
                 headers=self.headers,
-                json=order_data
+                json=order_data,
+                timeout=30
             )
             
             if response.status_code == 200:
                 result = response.json()
-                return {
-                    'success': True,
-                    'tracking_number': result.get('barcode'),
-                    'order_id': result.get('order-num'),
-                    'data': result
-                }
+                # API может вернуть массив или объект
+                if isinstance(result, list) and len(result) > 0:
+                    shipment = result[0]
+                    return {
+                        'success': True,
+                        'tracking_number': shipment.get('barcode'),
+                        'order_id': shipment.get('order-num'),
+                        'batch_name': shipment.get('batch-name'),
+                        'data': shipment
+                    }
+                elif isinstance(result, dict):
+                    return {
+                        'success': True,
+                        'tracking_number': result.get('barcode'),
+                        'order_id': result.get('order-num'),
+                        'batch_name': result.get('batch-name'),
+                        'data': result
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': 'Unexpected response format from API'
+                    }
             else:
-                return {
-                    'success': False,
-                    'error': f'API error: {response.status_code}'
-                }
+                try:
+                    error_data = response.json()
+                    error_message = error_data.get('desc', f'API error: {response.status_code}')
+                    return {
+                        'success': False,
+                        'error': error_message,
+                        'status_code': response.status_code,
+                        'response': error_data
+                    }
+                except:
+                    return {
+                        'success': False,
+                        'error': f'API error: {response.status_code} - {response.text[:200]}',
+                        'status_code': response.status_code
+                    }
             
         except Exception as e:
             return {
@@ -189,21 +214,41 @@ class RussianPostProvider:
             dict: информация об отслеживании
         """
         try:
-            if self.test_mode or not self.token or not self.key:
-                # В тестовом режиме возвращаем мок
+            # Проверяем наличие учетных данных
+            if not self.token or not self.key:
                 return {
-                    'success': True,
-                    'status': 'В пути',
-                    'location': 'Москва',
-                    'test_mode': True
+                    'success': False,
+                    'error': 'Russian Post credentials not configured'
                 }
             
             # Реальное отслеживание через API
+            # Используем публичный API для отслеживания (не требует авторизации)
+            # Или API с авторизацией если есть доступ
+            tracking_url = f"{self.base_url}tracking"
+            
+            # Пробуем сначала с авторизацией
             response = requests.get(
-                f"{self.base_url}tracking",
+                tracking_url,
                 headers=self.headers,
-                params={'track': tracking_number}
+                params={'track': tracking_number},
+                timeout=30
             )
+            
+            # Если не получилось с авторизацией, пробуем публичный API
+            if response.status_code == 401 or response.status_code == 403:
+                # Используем публичный API Почты России
+                public_response = requests.get(
+                    f"https://www.pochta.ru/tracking",
+                    params={'p': tracking_number},
+                    timeout=30
+                )
+                # Публичный API возвращает HTML, поэтому лучше использовать API с авторизацией
+                # или парсить HTML (но это сложнее)
+                return {
+                    'success': False,
+                    'error': 'Tracking requires valid API credentials. Use public tracking at https://www.pochta.ru/tracking',
+                    'public_url': f'https://www.pochta.ru/tracking?p={tracking_number}'
+                }
             
             if response.status_code == 200:
                 result = response.json()
@@ -214,17 +259,30 @@ class RussianPostProvider:
                     
                     if operations:
                         last_operation = operations[-1]
+                        operation_type = last_operation.get('operation-type', {})
+                        address_params = last_operation.get('address-parameters', {})
+                        
                         return {
                             'success': True,
-                            'status': last_operation.get('operation-type', {}).get('name', 'Неизвестно'),
-                            'location': last_operation.get('address-parameters', {}).get('place', None),
+                            'status': operation_type.get('name', 'Неизвестно'),
+                            'status_code': operation_type.get('code'),
+                            'location': address_params.get('place'),
+                            'index': address_params.get('index'),
                             'date': last_operation.get('operation-date'),
+                            'all_operations': operations,
+                            'data': track_info
+                        }
+                    else:
+                        return {
+                            'success': True,
+                            'status': 'Заказ создан',
                             'data': track_info
                         }
             
             return {
                 'success': False,
-                'error': 'Tracking info not found'
+                'error': f'Tracking info not found. Status: {response.status_code}',
+                'status_code': response.status_code
             }
             
         except Exception as e:

@@ -1,0 +1,23 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Парфюмы{% endblock %}
+{% block content %}
+<div class="topbar">
+    <form class="js-async-filter" data-target="#perfumes-list" method="get" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input name="q" placeholder="Поиск (название/бренд/категория)" value="{{ search|default:'' }}">
+        <label style="display:flex; gap:6px; align-items:center; font-size:13px;">
+            <input type="checkbox" name="in_stock" value="1" {% if in_stock == '1' %}checked{% endif %}> В наличии
+        </label>
+        <label style="display:flex; gap:6px; align-items:center; font-size:13px;">
+            <input type="checkbox" name="featured" value="1" {% if featured == '1' %}checked{% endif %}> Рекомендуемые
+        </label>
+        <label style="display:flex; gap:6px; align-items:center; font-size:13px;">
+            <input type="checkbox" name="on_sale" value="1" {% if on_sale == '1' %}checked{% endif %}> Со скидкой
+        </label>
+    </form>
+    <a class="btn" href="{% url 'adminpanel:perfume_create' %}">Добавить парфюм</a>
+</div>
+<div id="perfumes-list">
+    {% include "adminpanel/perfumes/_list.html" %}
+</div>
+{% endblock %}
+

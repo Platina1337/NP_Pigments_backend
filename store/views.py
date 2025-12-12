@@ -7,6 +7,7 @@ import random
 import requests
 import jwt
 from django.conf import settings
+from rest_framework.views import APIView
 try:
     from django_filters.rest_framework import DjangoFilterBackend
     from django_filters import FilterSet, NumberFilter, CharFilter
@@ -18,7 +19,8 @@ except ImportError:
     CharFilter = None
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.contrib.auth.models import User
-from django.db import models
+from django.db import models, transaction
+from django.db.utils import IntegrityError
 from django.shortcuts import get_object_or_404
 import logging
 from .models import (
@@ -26,6 +28,8 @@ from .models import (
     Category,
     Perfume,
     Pigment,
+    Promotion,
+    TrendingProduct,
     UserProfile,
     UserSettings,
     Cart,
@@ -35,19 +39,34 @@ from .models import (
     EmailOTP,
     Wishlist,
     WishlistItem,
+    LoyaltyAccount,
+    LoyaltyTransaction,
 )
 from .serializers import (
     BrandSerializer, CategorySerializer,
     PerfumeSerializer, PerfumeListSerializer,
     PigmentSerializer, PigmentListSerializer,
+    PromotionSerializer,
+    TrendingProductSerializer,
     UserRegistrationSerializer, UserSerializer, CustomTokenObtainPairSerializer,
     UserProfileSerializer, UserSettingsSerializer,
     CartSerializer, CartItemSerializer, OrderSerializer, OrderCreateSerializer,
     EmailOTPSerializer, EmailOTPVerifySerializer,
-    WishlistSerializer, WishlistItemSerializer
+    WishlistSerializer, WishlistItemSerializer,
+    LoyaltyAccountSerializer, LoyaltyTransactionSerializer,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def debug_log(*args):
+    """Безопасный лог для dev: отключен в проде."""
+    if settings.DEBUG:
+        logger.debug(" ".join(str(a) for a in args))
+
+
+# Подменяем print внутри модуля, чтобы не светить данные в проде
+print = debug_log  # type: ignore
 
 class BrandViewSet(viewsets.ModelViewSet):
     """ViewSet для брендов"""
@@ -102,16 +121,70 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+
+class PromotionViewSet(viewsets.ModelViewSet):
+    """Акции с поддержкой слотов главной и применением скидок."""
+    queryset = Promotion.objects.prefetch_related(
+        'perfumes__brand', 'perfumes__category',
+        'pigments__brand', 'pigments__category'
+    ).all()
+    serializer_class = PromotionSerializer
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        slot = self.request.query_params.get('slot')
+        active = self.request.query_params.get('active')
+        if slot:
+            qs = qs.filter(slot=slot)
+        if active is not None:
+            if str(active).lower() in ('1', 'true', 'yes'):
+                qs = qs.filter(active=True)
+            elif str(active).lower() in ('0', 'false', 'no'):
+                qs = qs.filter(active=False)
+        return qs.order_by('priority', '-created_at')
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def activate(self, request, pk=None):
+        promo = self.get_object()
+        promo.apply_discounts()
+        serializer = self.get_serializer(promo)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def deactivate(self, request, pk=None):
+        promo = self.get_object()
+        promo.clear_discounts()
+        serializer = self.get_serializer(promo)
+        return Response(serializer.data)
+
+
+class TrendingListView(APIView):
+    """Публичный список 'В тренде сейчас'."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        items = TrendingProduct.objects.select_related('perfume__brand', 'perfume__category',
+                                                       'pigment__brand', 'pigment__category').order_by('position', '-created_at')
+        serializer = TrendingProductSerializer(items, many=True)
+        return Response(serializer.data)
+
+
 # Кастомный фильтр для парфюмов
 if FilterSet:
     class PerfumeFilter(FilterSet):
         min_price = NumberFilter(field_name='price', lookup_expr='gte')
         max_price = NumberFilter(field_name='price', lookup_expr='lte')
         search = CharFilter(method='filter_search')
+        on_sale = CharFilter(method='filter_on_sale')
 
         class Meta:
             model = Perfume
-            fields = ['brand', 'category', 'gender', 'in_stock', 'featured', 'min_price', 'max_price']
+            fields = ['brand', 'category', 'gender', 'in_stock', 'featured', 'on_sale', 'min_price', 'max_price']
 
         def filter_search(self, queryset, name, value):
             if not value:
@@ -122,6 +195,16 @@ if FilterSet:
                 models.Q(category__name__icontains=value) |
                 models.Q(description__icontains=value)
             )
+
+        def filter_on_sale(self, queryset, name, value):
+            if value in (None, ''):
+                return queryset
+            if str(value).lower() in ('1', 'true', 'yes'):
+                return queryset.filter(
+                    models.Q(discount_percentage__gt=0)
+                    | models.Q(discount_price__isnull=False, discount_price__gt=0)
+                )
+            return queryset
 
 class PerfumeViewSet(viewsets.ModelViewSet):
     """ViewSet для парфюмов"""
@@ -138,6 +221,15 @@ class PerfumeViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return PerfumeListSerializer
         return PerfumeSerializer
+
+    @action(detail=False, methods=['get'], url_path='by-slug/(?P<slug>[^/]+)')
+    def by_slug(self, request, slug=None):
+        """Получить парфюм по slug."""
+        qs = self.get_queryset().filter(slug=slug).first()
+        if not qs:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(qs)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
     def in_stock(self, request):
@@ -181,6 +273,7 @@ class PerfumeViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+
 class PigmentViewSet(viewsets.ModelViewSet):
     """ViewSet для пигментов"""
     queryset = Pigment.objects.select_related('brand', 'category').all()
@@ -195,6 +288,15 @@ class PigmentViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return PigmentListSerializer
         return PigmentSerializer
+
+    @action(detail=False, methods=['get'], url_path='by-slug/(?P<slug>[^/]+)')
+    def by_slug(self, request, slug=None):
+        """Получить пигмент по slug."""
+        qs = self.get_queryset().filter(slug=slug).first()
+        if not qs:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(qs)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
     def in_stock(self, request):
@@ -391,6 +493,9 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
                 'brand_name': perfume.brand.name,
                 'category_name': perfume.category.name,
                 'price': perfume.price,
+                'final_price': perfume.get_discounted_price(),
+                'is_on_sale': perfume.is_on_sale(),
+                'discount_percent_display': perfume.get_discount_percentage_display(),
                 'in_stock': perfume.in_stock,
                 'image': perfume.image.url if perfume.image else None,
                 'product_type': 'perfume',
@@ -407,6 +512,9 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
                 'brand_name': pigment.brand.name,
                 'category_name': pigment.category.name,
                 'price': pigment.price,
+                'final_price': pigment.get_discounted_price(),
+                'is_on_sale': pigment.is_on_sale(),
+                'discount_percent_display': pigment.get_discount_percentage_display(),
                 'in_stock': pigment.in_stock,
                 'image': pigment.image.url if pigment.image else None,
                 'product_type': 'pigment',
@@ -690,6 +798,26 @@ class OrderViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+
+class LoyaltyAccountView(generics.RetrieveAPIView):
+    """Баланс программы лояльности текущего пользователя"""
+    permission_classes = [IsAuthenticated]
+    serializer_class = LoyaltyAccountSerializer
+
+    def get_object(self):
+        account, _ = LoyaltyAccount.objects.get_or_create(user=self.request.user)
+        return account
+
+
+class LoyaltyTransactionListView(generics.ListAPIView):
+    """История операций по баллам лояльности"""
+    permission_classes = [IsAuthenticated]
+    serializer_class = LoyaltyTransactionSerializer
+
+    def get_queryset(self):
+        return LoyaltyTransaction.objects.filter(user=self.request.user).order_by('-created_at')
+
+
 # Email OTP endpoints
 
 class EmailOTPSendView(generics.CreateAPIView):
@@ -704,40 +832,64 @@ class EmailOTPSendView(generics.CreateAPIView):
         email = serializer.validated_data['email']
         purpose = serializer.validated_data.get('purpose', 'login')
 
-        # Проверяем, существует ли пользователь для входа
+        # Простейший rate-limit: не чаще 1 запроса в 60 секунд для одного email/цели
+        from datetime import timedelta
+        recently_sent = EmailOTP.objects.filter(
+            email=email,
+            purpose=purpose,
+            created_at__gte=timezone.now() - timedelta(seconds=60)
+        ).exists()
+        if recently_sent:
+            return Response(
+                {'error': 'Слишком часто. Повторите попытку через минуту.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        # Для регистрации не создаем пользователя до подтверждения OTP
+        # Для входа проверяем существование пользователя
         if purpose == 'login':
             try:
                 user = User.objects.get(email=email)
             except User.DoesNotExist:
-                # Создаем временного пользователя для входа
-                username = email.split('@')[0] + str(random.randint(1000, 9999))
-                while User.objects.filter(username=username).exists():
-                    username = email.split('@')[0] + str(random.randint(1000, 9999))
-
-                user = User.objects.create_user(
-                    username=username,
-                    email=email,
-                    first_name=email.split('@')[0].title(),
-                    is_active=False  # Не активируем до подтверждения OTP
+                return Response(
+                    {'error': 'Пользователь с таким email не найден'},
+                    status=status.HTTP_404_NOT_FOUND
                 )
+        
+        # Для регистрации проверяем, не зарегистрирован ли уже пользователь
+        elif purpose == 'register':
+            try:
+                user = User.objects.get(email=email, is_active=True)
+                # Если пользователь уже активен, значит он уже зарегистрирован
+                return Response(
+                    {'error': 'Аккаунт с таким email уже зарегистрирован'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except User.DoesNotExist:
+                # Пользователь не существует или не активен - можно продолжать регистрацию
+                pass
 
-        # Создаем OTP код
-        otp_instance = EmailOTP.create_otp(email, purpose)
+        # Собираем данные регистрации для сохранения в OTP
+        register_data = None
+        if purpose == 'register':
+            register_data = {
+                'username': request.data.get('username', ''),
+                'password': request.data.get('password', ''),
+                'first_name': request.data.get('first_name', ''),
+                'last_name': request.data.get('last_name', ''),
+            }
 
-        # Отправляем email с кодом
+        # Создаем OTP код с магическим токеном и данными регистрации
+        otp_instance = EmailOTP.create_otp(email, purpose, register_data)
+
+        # Отправляем email с кодом и магической ссылкой
         from .emails import send_otp_email
-        email_sent = send_otp_email(email, otp_instance.otp_code, purpose)
+        email_sent = send_otp_email(email, otp_instance.otp_code, purpose, otp_instance.magic_token)
 
         response_data = {
             'message': f'OTP код отправлен на {email}',
             'expires_in': 600,  # 10 минут
         }
-        
-        # В режиме отладки или если email не отправлен, возвращаем код в ответе
-        if settings.DEBUG or not email_sent:
-            response_data['otp_code'] = otp_instance.otp_code
-            response_data['debug'] = True
-
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 
@@ -807,28 +959,228 @@ class EmailOTPVerifyView(generics.CreateAPIView):
             }, status=status.HTTP_200_OK)
 
         elif purpose == 'register':
-            # Регистрация нового пользователя
+            # Регистрация нового пользователя - создаем только после подтверждения OTP
             try:
                 user = User.objects.get(email=email)
+                # Если пользователь уже активен, значит он уже зарегистрирован
                 if user.is_active:
                     return Response(
-                        {'error': 'Пользователь уже зарегистрирован'},
+                        {'error': 'Аккаунт с таким email уже зарегистрирован'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-                # Активируем пользователя
+                # Если пользователь существует, но не активен - обновляем только данные для входа
+                # Обновляем только username и password (данные для входа)
+                if 'username' in serializer.validated_data and serializer.validated_data['username']:
+                    # Проверяем уникальность username
+                    if User.objects.filter(username=serializer.validated_data['username']).exclude(pk=user.pk).exists():
+                        return Response(
+                            {'error': 'Пользователь с таким именем уже существует'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    user.username = serializer.validated_data['username']
+
+                if 'password' in serializer.validated_data and serializer.validated_data['password']:
+                    user.set_password(serializer.validated_data['password'])
+
+                # Активируем пользователя после подтверждения OTP
                 user.is_active = True
                 user.save()
+
+                # Создаем или обновляем UserProfile (все данные профиля хранятся здесь)
+                first_name = serializer.validated_data.get('first_name', '')
+                last_name = serializer.validated_data.get('last_name', '')
+                
+                try:
+                    profile, created = UserProfile.objects.update_or_create(
+                        user=user,
+                        defaults={
+                            'first_name': first_name,
+                            'last_name': last_name
+                        }
+                    )
+                    # Убеждаемся, что данные сохранены
+                    if first_name:
+                        profile.first_name = first_name
+                    if last_name:
+                        profile.last_name = last_name
+                    profile.save()
+                    logger.info(f"Профиль создан/обновлен для пользователя {user.id}: first_name={profile.first_name}, last_name={profile.last_name}")
+                except Exception as e:
+                    # Если возникла ошибка, пытаемся получить существующий профиль и обновить его
+                    logger.warning(f"Ошибка при создании профиля для пользователя {user.id}: {e}")
+                    try:
+                        profile = UserProfile.objects.get(user=user)
+                        if first_name:
+                            profile.first_name = first_name
+                        if last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                        logger.info(f"Профиль обновлен для пользователя {user.id}: first_name={profile.first_name}, last_name={profile.last_name}")
+                    except UserProfile.DoesNotExist:
+                        return Response(
+                            {'error': 'Ошибка при создании профиля. Аккаунт уже существует'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                # Создаем или получаем UserSettings
+                settings_obj, settings_created = UserSettings.objects.get_or_create(user=user)
+                
+                # Обновляем объект user, чтобы получить свежие данные профиля
+                user.refresh_from_db()
+                # Принудительно обновляем связанные объекты профиля
+                try:
+                    user.profile.refresh_from_db()
+                except UserProfile.DoesNotExist:
+                    pass
             except User.DoesNotExist:
-                # Создаем нового пользователя
-                username = email.split('@')[0] + str(random.randint(1000, 9999))
+                # Создаем нового пользователя только с данными для входа (username, email, password)
+                username = serializer.validated_data.get('username') or email.split('@')[0] + str(random.randint(1000, 9999))
                 while User.objects.filter(username=username).exists():
                     username = email.split('@')[0] + str(random.randint(1000, 9999))
 
+                # Создаем пользователя БЕЗ first_name и last_name (они хранятся только в UserProfile)
                 user = User.objects.create_user(
                     username=username,
                     email=email,
-                    first_name=email.split('@')[0].title(),
-                    is_active=True
+                    password=serializer.validated_data.get('password'),
+                    is_active=True  # Активируем сразу, так как OTP уже подтвержден
+                )
+
+                # Создаем UserProfile с данными профиля (first_name, last_name хранятся здесь)
+                first_name = serializer.validated_data.get('first_name', '')
+                last_name = serializer.validated_data.get('last_name', '')
+                
+                try:
+                    profile, created = UserProfile.objects.update_or_create(
+                        user=user,
+                        defaults={
+                            'first_name': first_name,
+                            'last_name': last_name
+                        }
+                    )
+                    # Убеждаемся, что данные сохранены
+                    if first_name:
+                        profile.first_name = first_name
+                    if last_name:
+                        profile.last_name = last_name
+                    profile.save()
+                    logger.info(f"Профиль создан/обновлен для пользователя {user.id}: first_name={profile.first_name}, last_name={profile.last_name}")
+                except Exception as e:
+                    logger.error(f"Ошибка при создании профиля: {e}")
+                    # Пытаемся получить существующий профиль и обновить его
+                    try:
+                        profile = UserProfile.objects.get(user=user)
+                        if first_name:
+                            profile.first_name = first_name
+                        if last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                        logger.info(f"Профиль обновлен для пользователя {user.id}: first_name={profile.first_name}, last_name={profile.last_name}")
+                    except UserProfile.DoesNotExist:
+                        return Response(
+                            {'error': 'Ошибка при создании профиля. Попробуйте еще раз'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                        )
+
+                UserSettings.objects.get_or_create(user=user)
+                
+                # Обновляем объект user, чтобы получить свежие данные профиля
+                user.refresh_from_db()
+                # Принудительно обновляем связанные объекты профиля
+                try:
+                    user.profile.refresh_from_db()
+                except UserProfile.DoesNotExist:
+                    pass
+
+            # Генерируем токены
+            refresh = CustomTokenObtainPairSerializer.get_token(user)
+            access_token = str(refresh.access_token)
+            
+            # Сериализуем пользователя с обновленными данными профиля
+            user_data = UserSerializer(user).data
+            logger.info(f"Возвращаем данные пользователя после регистрации: profile.first_name={user_data.get('profile', {}).get('first_name')}, profile.last_name={user_data.get('profile', {}).get('last_name')}")
+
+            return Response({
+                'user': user_data,
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': access_token,
+                },
+                'message': 'Регистрация завершена успешно'
+            }, status=status.HTTP_201_CREATED)
+
+
+class MagicLinkVerifyView(generics.CreateAPIView):
+    """Верификация через магическую ссылку"""
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        token = request.data.get('token')
+        purpose = request.data.get('purpose', 'login')
+
+        if not token:
+            return Response(
+                {'error': 'Токен не предоставлен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Находим OTP по magic_token (разрешаем использовать даже если уже использован, если пользователь еще не создан)
+        try:
+            otp_instance = EmailOTP.objects.get(
+                magic_token=token,
+                purpose=purpose
+            )
+        except EmailOTP.DoesNotExist:
+            return Response(
+                {'error': 'Недействительная или истёкшая ссылка'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Проверяем срок действия
+        if otp_instance.is_expired:
+            return Response(
+                {'error': 'Срок действия ссылки истёк'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        email = otp_instance.email
+        
+        # Проверяем, не создан ли уже пользователь для этого email (если да, то просто входим)
+        if purpose == 'register':
+            try:
+                user_exists = User.objects.filter(email=email, is_active=True).exists()
+                if user_exists:
+                    # Пользователь уже создан - просто выполняем вход
+                    user = User.objects.get(email=email, is_active=True)
+                    refresh = CustomTokenObtainPairSerializer.get_token(user)
+                    access_token = str(refresh.access_token)
+                    return Response({
+                        'user': UserSerializer(user).data,
+                        'tokens': {
+                            'refresh': str(refresh),
+                            'access': access_token,
+                        },
+                        'message': 'Вход выполнен успешно'
+                    }, status=status.HTTP_200_OK)
+            except User.DoesNotExist:
+                pass
+
+        # Помечаем код как использованный только если пользователь еще не создан
+        if not otp_instance.is_used:
+            otp_instance.is_used = True
+            otp_instance.save()
+
+        if purpose == 'login':
+            # Вход пользователя
+            try:
+                user = User.objects.get(email=email)
+                if not user.is_active:
+                    user.is_active = True
+                    user.save()
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Пользователь не найден'},
+                    status=status.HTTP_404_NOT_FOUND
                 )
 
             # Генерируем токены
@@ -841,8 +1193,199 @@ class EmailOTPVerifyView(generics.CreateAPIView):
                     'refresh': str(refresh),
                     'access': access_token,
                 },
+                'message': 'Вход выполнен успешно'
+            }, status=status.HTTP_200_OK)
+
+        elif purpose == 'register':
+            # Для регистрации через magic link логика должна быть такой же, как при верификации OTP
+            # Получаем данные для регистрации из БД (register_data) или из запроса (fallback)
+            register_data_from_db = None
+            if otp_instance.register_data:
+                import json
+                try:
+                    register_data_from_db = json.loads(otp_instance.register_data)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Failed to parse register_data for email {email}")
+            
+            # Используем данные из БД, если они есть, иначе из запроса
+            username = (register_data_from_db.get('username', '') if register_data_from_db else request.data.get('username', '')).strip()
+            password = (register_data_from_db.get('password', '') if register_data_from_db else request.data.get('password', '')).strip()
+            first_name = (register_data_from_db.get('first_name', '') if register_data_from_db else request.data.get('first_name', '')).strip()
+            last_name = (register_data_from_db.get('last_name', '') if register_data_from_db else request.data.get('last_name', '')).strip()
+            
+            # Логирование для отладки
+            logger.info(f"Magic link register: email={email}, username={username}, has_password={bool(password)}, first_name={first_name}, last_name={last_name}, data_from_db={register_data_from_db is not None}")
+            
+            try:
+                user = User.objects.get(email=email)
+                # Если пользователь уже активен, значит он уже зарегистрирован
+                if user.is_active:
+                    # Пользователь уже активен - это просто вход
+                    refresh = CustomTokenObtainPairSerializer.get_token(user)
+                    access_token = str(refresh.access_token)
+                    return Response({
+                        'user': UserSerializer(user).data,
+                        'tokens': {
+                            'refresh': str(refresh),
+                            'access': access_token,
+                        },
+                        'message': 'Вход выполнен успешно'
+                    }, status=status.HTTP_200_OK)
+                
+                # Если пользователь существует, но не активен - обновляем данные и активируем
+                if username:
+                    # Проверяем уникальность username
+                    if User.objects.filter(username=username).exclude(pk=user.pk).exists():
+                        return Response(
+                            {'error': 'Пользователь с таким именем уже существует'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    user.username = username
+                
+                if password:
+                    user.set_password(password)
+                
+                # Активируем пользователя после подтверждения через магическую ссылку
+                user.is_active = True
+                user.save()
+                
+                # Создаем или обновляем UserProfile (все данные профиля хранятся здесь)
+                try:
+                    profile, created = UserProfile.objects.update_or_create(
+                        user=user,
+                        defaults={
+                            'first_name': first_name,
+                            'last_name': last_name
+                        }
+                    )
+                    # Убеждаемся, что данные сохранены
+                    if first_name:
+                        profile.first_name = first_name
+                    if last_name:
+                        profile.last_name = last_name
+                    profile.save()
+                except Exception as e:
+                    # Если возникла ошибка, пытаемся получить существующий профиль и обновить его
+                    try:
+                        profile = UserProfile.objects.get(user=user)
+                        if first_name:
+                            profile.first_name = first_name
+                        if last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                    except UserProfile.DoesNotExist:
+                        return Response(
+                            {'error': 'Ошибка при создании профиля. Аккаунт уже существует'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                
+                # Создаем или получаем UserSettings
+                UserSettings.objects.get_or_create(user=user)
+                
+            except User.DoesNotExist:
+                # Создаем нового пользователя только с данными для входа (username, email, password)
+                # Если username не передан или пустой, генерируем его из email
+                if not username or username.strip() == '':
+                    base_username = email.split('@')[0]
+                    username = base_username + str(random.randint(1000, 9999))
+                    while User.objects.filter(username=username).exists():
+                        username = base_username + str(random.randint(1000, 9999))
+                    logger.info(f"Generated username: {username} (original was empty)")
+                else:
+                    # Проверяем уникальность username перед созданием
+                    if User.objects.filter(username=username).exists():
+                        # Если username уже занят, генерируем новый
+                        base_username = email.split('@')[0]
+                        username = base_username + str(random.randint(1000, 9999))
+                        while User.objects.filter(username=username).exists():
+                            username = base_username + str(random.randint(1000, 9999))
+                        logger.warning(f"Username was taken, generated new: {username}")
+                
+                # Проверяем, что password передан
+                if not password or password.strip() == '':
+                    return Response(
+                        {'error': 'Пароль обязателен для регистрации'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                logger.info(f"Creating user with username={username}, email={email}, first_name={first_name}, last_name={last_name}")
+                
+                # Используем транзакцию и обработку IntegrityError для предотвращения гонки
+                try:
+                    with transaction.atomic():
+                        # Создаем пользователя БЕЗ first_name и last_name (они хранятся только в UserProfile)
+                        user = User.objects.create_user(
+                            username=username,
+                            email=email,
+                            password=password,
+                            is_active=True  # Активируем сразу, так как магическая ссылка уже подтверждена
+                        )
+                        
+                        # Создаем UserProfile с данными профиля (first_name, last_name хранятся здесь)
+                        profile, created = UserProfile.objects.update_or_create(
+                            user=user,
+                            defaults={
+                                'first_name': first_name,
+                                'last_name': last_name
+                            }
+                        )
+                        # Убеждаемся, что данные сохранены
+                        if first_name:
+                            profile.first_name = first_name
+                        if last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                        
+                        UserSettings.objects.get_or_create(user=user)
+                except IntegrityError as e:
+                    # Если пользователь уже создан другим запросом, получаем его
+                    logger.warning(f"IntegrityError during user creation: {e}. Trying to get existing user.")
+                    try:
+                        # Пытаемся получить пользователя по email (более надежно)
+                        user = User.objects.get(email=email)
+                        logger.info(f"User already exists, retrieved: {user.username}")
+                    except User.DoesNotExist:
+                        # Если не нашли по email, пытаемся по username
+                        user = User.objects.get(username=username)
+                        logger.info(f"User found by username: {user.username}")
+                    
+                    # Обновляем профиль если нужно
+                    profile, created = UserProfile.objects.get_or_create(
+                        user=user,
+                        defaults={
+                            'first_name': first_name,
+                            'last_name': last_name
+                        }
+                    )
+                    if not created:
+                        # Обновляем существующий профиль
+                        if first_name:
+                            profile.first_name = first_name
+                        if last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                    
+                    UserSettings.objects.get_or_create(user=user)
+
+            # Генерируем токены
+            refresh = CustomTokenObtainPairSerializer.get_token(user)
+            access_token = str(refresh.access_token)
+            
+            user.refresh_from_db()
+
+            return Response({
+                'user': UserSerializer(user).data,
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': access_token,
+                },
                 'message': 'Регистрация завершена успешно'
             }, status=status.HTTP_201_CREATED)
+
+        return Response(
+            {'error': 'Неизвестная цель верификации'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 
 # Google OAuth endpoints
@@ -909,13 +1452,11 @@ def verify_google_token(token):
         print(f"[GOOGLE_VERIFY] General error: {str(e)}")  # Логирование
         raise ValueError(f'Ошибка валидации токена: {str(e)}')
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@authentication_classes([])  # Отключаем все аутентификационные классы
-def google_oauth_login(request):
-    """Вход через Google OAuth"""
-    print(f"[GOOGLE_OAUTH] Request data: {request.data}")  # Логирование
-    google_token = request.data.get('google_token')
+def _process_google_oauth(google_token, is_register=False):
+    """
+    Вспомогательная функция для обработки Google OAuth логина/регистрации
+    Принимает токен напрямую, возвращает Response объект
+    """
     print(f"[GOOGLE_OAUTH] Google token present: {bool(google_token)}")  # Логирование
 
     if not google_token:
@@ -945,41 +1486,153 @@ def google_oauth_login(request):
             )
 
         # Ищем или создаем пользователя по email
+        user_created = False
         try:
             user = User.objects.get(email=email)
-            # Обновляем данные если нужно
-            if name and not user.first_name:
-                user.first_name = name.split()[0] if name else ''
-                user.last_name = ' '.join(name.split()[1:]) if len(name.split()) > 1 else ''
+            print(f"[GOOGLE_OAUTH] Existing user found: {user.email}")  # Логирование
+            
+            # Активируем пользователя при входе через Google, если он был неактивен
+            if not user.is_active:
+                user.is_active = True
                 user.save()
+                print(f"[GOOGLE_OAUTH] User {user.email} activated via Google login")  # Логирование
+            
+            # Если у пользователя нет пароля, генерируем и отправляем его
+            if not user.has_usable_password():
+                generated_password = generate_random_password(length=12)
+                user.set_password(generated_password)
+                user.save()
+                print(f"[GOOGLE_OAUTH] Generated password for existing user: {user.username}")  # Логирование
+                
+                # Отправляем пароль на email пользователя
+                email_sent = False
+                try:
+                    email_sent = send_google_password_email(email, generated_password, user.username, name)
+                    if email_sent:
+                        print(f"[GOOGLE_OAUTH] Password email sent successfully to {email}")  # Логирование
+                    else:
+                        print(f"[GOOGLE_OAUTH] Failed to send password email to {email} (send_google_password_email returned False)")  # Логирование
+                except Exception as e:
+                    print(f"[GOOGLE_OAUTH] Exception while sending password email: {str(e)}")  # Логирование
+                    import traceback
+                    print(f"[GOOGLE_OAUTH] Email error traceback: {traceback.format_exc()}")  # Логирование
+                    # Не прерываем процесс, если email не отправился
         except User.DoesNotExist:
-            # Создаем нового пользователя
+            # Создаем нового пользователя БЕЗ first_name и last_name (они хранятся только в UserProfile)
+            user_created = True
+            print(f"[GOOGLE_OAUTH] Creating new user: {email}")  # Логирование
             username = email.split('@')[0] + str(random.randint(1000, 9999))
             while User.objects.filter(username=username).exists():
                 username = email.split('@')[0] + str(random.randint(1000, 9999))
 
-            first_name = name.split()[0] if name else ''
-            last_name = ' '.join(name.split()[1:]) if len(name.split()) > 1 else ''
+            # Генерируем случайный пароль для пользователя
+            generated_password = generate_random_password(length=12)
+            print(f"[GOOGLE_OAUTH] Generated password for user: {username}")  # Логирование
 
             user = User.objects.create_user(
                 username=username,
                 email=email,
-                first_name=first_name,
-                last_name=last_name,
+                password=generated_password,
                 is_active=True
             )
+            
+            # Отправляем пароль на email пользователя
+            # Отправляем всегда при создании нового пользователя (и при регистрации, и при логине, если пользователь не найден)
+            email_sent = False
+            try:
+                email_sent = send_google_password_email(email, generated_password, username, name)
+                if email_sent:
+                    print(f"[GOOGLE_OAUTH] Password email sent successfully to {email}")  # Логирование
+                else:
+                    print(f"[GOOGLE_OAUTH] Failed to send password email to {email} (send_google_password_email returned False)")  # Логирование
+            except Exception as e:
+                print(f"[GOOGLE_OAUTH] Exception while sending password email: {str(e)}")  # Логирование
+                import traceback
+                print(f"[GOOGLE_OAUTH] Email error traceback: {traceback.format_exc()}")  # Логирование
+                # Не прерываем процесс, если email не отправился
+
+        # Обновляем данные профиля в UserProfile
+        # При регистрации (новый пользователь) - заполняем данными из Google
+        # При логине (существующий пользователь) - НЕ перезаписываем, только если поля пустые
+        if name:
+            first_name = name.split()[0] if name else ''
+            last_name = ' '.join(name.split()[1:]) if len(name.split()) > 1 else ''
+            
+            try:
+                profile, profile_created = UserProfile.objects.get_or_create(user=user)
+                
+                # Если пользователь новый (только что создан) - заполняем данными из Google
+                # Если пользователь существующий - заполняем только пустые поля
+                if user_created:
+                    # При регистрации - заполняем данными из Google
+                    print(f"[GOOGLE_OAUTH] New user - setting profile data: {first_name} {last_name}")  # Логирование
+                    profile.first_name = first_name
+                    profile.last_name = last_name
+                    profile.save()
+                else:
+                    # При логине - заполняем только если поля пустые
+                    print(f"[GOOGLE_OAUTH] Existing user - updating only empty fields")  # Логирование
+                    updated = False
+                    if first_name and not profile.first_name:
+                        profile.first_name = first_name
+                        updated = True
+                        print(f"[GOOGLE_OAUTH] Updated empty first_name: {first_name}")  # Логирование
+                    if last_name and not profile.last_name:
+                        profile.last_name = last_name
+                        updated = True
+                        print(f"[GOOGLE_OAUTH] Updated empty last_name: {last_name}")  # Логирование
+                    if updated:
+                        profile.save()
+                    else:
+                        print(f"[GOOGLE_OAUTH] Profile already has data, skipping update")  # Логирование
+                        
+            except Exception as e:
+                logger.warning(f"Ошибка при обновлении профиля для пользователя {user.id}: {e}")
+                # Пытаемся получить существующий профиль и обновить его только если пустые поля
+                try:
+                    profile = UserProfile.objects.get(user=user)
+                    if user_created:
+                        # Новый пользователь - заполняем данными
+                        if first_name:
+                            profile.first_name = first_name
+                        if last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                    else:
+                        # Существующий пользователь - только пустые поля
+                        if first_name and not profile.first_name:
+                            profile.first_name = first_name
+                        if last_name and not profile.last_name:
+                            profile.last_name = last_name
+                        profile.save()
+                except UserProfile.DoesNotExist:
+                    # Профиль не существует - создаем с данными из Google
+                    if first_name or last_name:
+                        UserProfile.objects.create(
+                            user=user,
+                            first_name=first_name,
+                            last_name=last_name
+                        )
+
+        # Обновляем объект user, чтобы получить свежие данные профиля
+        user.refresh_from_db()
+        try:
+            user.profile.refresh_from_db()
+        except UserProfile.DoesNotExist:
+            pass
 
         # Генерируем JWT токены
         refresh = CustomTokenObtainPairSerializer.get_token(user)
         access_token = str(refresh.access_token)
 
+        message = 'Регистрация через Google выполнена успешно' if is_register else 'Вход через Google выполнен успешно'
         return Response({
             'user': UserSerializer(user).data,
             'tokens': {
                 'refresh': str(refresh),
                 'access': access_token,
             },
-            'message': 'Вход через Google выполнен успешно'
+            'message': message
         }, status=status.HTTP_200_OK)
 
     except ValueError as e:
@@ -1000,11 +1653,23 @@ def google_oauth_login(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@authentication_classes([])  # Отключаем все аутентификационные классы
+def google_oauth_login(request):
+    """Вход через Google OAuth"""
+    print(f"[GOOGLE_OAUTH] Request data: {request.data}")  # Логирование
+    google_token = request.data.get('google_token')
+    return _process_google_oauth(google_token, is_register=False)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
 @authentication_classes([])
 def google_oauth_register(request):
     """Регистрация через Google OAuth"""
+    print(f"[GOOGLE_OAUTH] Request data: {request.data}")  # Логирование
+    google_token = request.data.get('google_token')
     # Для Google OAuth регистрация аналогична логину - пользователь создается автоматически
-    return google_oauth_login(request)
+    return _process_google_oauth(google_token, is_register=True)
 
 
 # API для управления темой
@@ -1058,7 +1723,7 @@ def public_theme_settings(request):
 
 from .payment_providers.yookassa import YooKassaProvider
 from .payment_providers.tinkoff import TinkoffProvider
-from .emails import send_payment_confirmation, send_order_confirmation
+from .emails import send_payment_confirmation, send_order_confirmation, generate_random_password, send_google_password_email
 
 
 @api_view(['POST'])
@@ -1353,6 +2018,7 @@ def create_delivery_order(request):
     """Создание заказа на доставку"""
     order_id = request.data.get('order_id')
     provider = request.data.get('provider')  # 'cdek' или 'russian_post'
+    tariff_code = request.data.get('tariff_code')  # Для CDEK: код тарифа (137, 139 и т.д.)
     
     if not order_id or not provider:
         return Response(
@@ -1361,21 +2027,210 @@ def create_delivery_order(request):
         )
     
     try:
-        order = Order.objects.get(id=order_id, user=request.user)
+        order = Order.objects.select_related('user').prefetch_related('items').get(id=order_id, user=request.user)
     except Order.DoesNotExist:
         return Response(
             {'error': 'Заказ не найден'},
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Здесь должна быть логика создания заказа в службе доставки
-    # Пока возвращаем заглушку
+    # Проверяем, что заказ уже оплачен или в обработке
+    if order.status not in ['paid', 'processing']:
+        return Response(
+            {'error': 'Заказ должен быть оплачен или в обработке для создания доставки'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
     
-    return Response({
-        'success': True,
-        'message': 'Заказ на доставку создан',
-        'tracking_number': 'TRACK123456789'
-    })
+    # Проверяем, что заказ на доставку еще не создан
+    if order.tracking_number:
+        return Response(
+            {'error': 'Заказ на доставку уже создан', 'tracking_number': order.tracking_number},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Рассчитываем вес и габариты посылок
+    total_weight = 0
+    packages = []
+    
+    for item in order.items.all():
+        if item.perfume:
+            # Вес парфюма: примерно 1.2г на мл объема
+            weight = item.perfume.volume_ml * 1.2
+            total_weight += weight * item.quantity
+        elif item.pigment:
+            weight = item.pigment.weight_gr
+            total_weight += weight * item.quantity
+    
+    # Минимальный вес 100г
+    if total_weight < 100:
+        total_weight = 100
+    
+    # Формируем посылки (можно разбить на несколько, если вес большой)
+    # Пока делаем одну посылку
+    packages = [{
+        'weight': int(total_weight),
+        'length': 20,  # см
+        'width': 15,   # см
+        'height': 10   # см
+    }]
+    
+    # Получаем данные пользователя
+    user = order.user
+    user_name = user.get_full_name() or user.username
+    user_email = user.email or ''
+    
+    # Адрес отправителя (можно вынести в настройки)
+    sender_postal_code = '101000'  # Москва
+    sender_city = 'Москва'
+    sender_address = 'Адрес склада'  # TODO: вынести в настройки
+    
+    try:
+        if provider == 'cdek':
+            # Создание заказа в CDEK
+            if not tariff_code:
+                tariff_code = 137  # По умолчанию "Посылка склад-дверь"
+            
+            # Подготовка данных для CDEK API
+            # Для CDEK нужны коды городов, но можно использовать postal_code
+            cdek_order_data = {
+                'type': 1,  # Интернет-магазин
+                'number': f'ORDER_{order.id}',
+                'tariff_code': int(tariff_code),
+                'comment': order.customer_notes or f'Заказ #{order.id}',
+                'sender': {
+                    'company': 'Интернет-магазин парфюмерии',  # TODO: вынести в настройки
+                    'name': 'Отдел доставки',
+                    'phones': [{'number': '+79991234567'}],  # TODO: вынести в настройки
+                    'email': settings.DEFAULT_FROM_EMAIL or 'noreply@example.com'
+                },
+                'recipient': {
+                    'name': user_name,
+                    'phones': [{'number': order.delivery_phone}],
+                    'email': user_email
+                },
+                'from_location': {
+                    'postal_code': sender_postal_code,
+                    'address': sender_address,
+                    'city': sender_city
+                },
+                'to_location': {
+                    'postal_code': order.delivery_postal_code,
+                    'address': order.delivery_address,
+                    'city': order.delivery_city
+                },
+                'packages': [
+                    {
+                        'number': f'PACKAGE_{order.id}_1',
+                        'weight': pkg['weight'],
+                        'length': pkg['length'],
+                        'width': pkg['width'],
+                        'height': pkg['height'],
+                        'comment': 'Парфюмерия'
+                    }
+                    for pkg in packages
+                ]
+            }
+            
+            cdek = CDEKProvider()
+            result = cdek.create_order(cdek_order_data)
+            
+            if result['success']:
+                # Сохраняем данные в заказ
+                order.tracking_number = result.get('cdek_number', '')
+                order.delivery_service_order_id = result.get('order_uuid', '')
+                order.status = 'shipped'
+                from django.utils import timezone
+                order.shipped_at = timezone.now()
+                order.save()
+                
+                # Отправляем email уведомление
+                from .emails import send_shipping_notification
+                send_shipping_notification(order, order.tracking_number)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Заказ на доставку CDEK создан',
+                    'tracking_number': order.tracking_number,
+                    'order_uuid': result.get('order_uuid'),
+                    'cdek_number': result.get('cdek_number')
+                })
+            else:
+                return Response(
+                    {'error': result.get('error', 'Ошибка создания заказа в CDEK')},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        elif provider == 'russian_post':
+            # Создание заказа в Почте России
+            # Определяем тип отправления по весу
+            mail_type = 'POSTAL_PARCEL'  # Посылка
+            if total_weight > 2000:  # Если больше 2кг, может потребоваться другой тип
+                mail_type = 'POSTAL_PARCEL'
+            
+            # Подготовка данных для Почты России API
+            russian_post_order_data = [{
+                'mailType': mail_type,
+                'mailCategory': 'ORDINARY',  # Обычное отправление
+                'weight': int(total_weight),
+                'recipientName': user_name,
+                'recipientAddress': {
+                    'index': order.delivery_postal_code,
+                    'address': order.delivery_address,
+                    'area': order.delivery_city
+                },
+                'recipientPhone': order.delivery_phone,
+                'senderName': 'Интернет-магазин парфюмерии',  # TODO: вынести в настройки
+                'senderAddress': {
+                    'index': sender_postal_code,
+                    'address': sender_address
+                },
+                'payment': 0,  # 0 - наложенный платеж (если оплата наличными), 1 - предоплата
+                'declaredValue': float(order.total),  # Объявленная ценность
+                'orderNum': f'ORDER_{order.id}',
+                'comment': order.customer_notes or f'Заказ #{order.id}'
+            }]
+            
+            russian_post = RussianPostProvider()
+            result = russian_post.create_order(russian_post_order_data)
+            
+            if result['success']:
+                # Сохраняем данные в заказ
+                order.tracking_number = result.get('tracking_number', '')
+                order.delivery_service_order_id = result.get('order_id', '')
+                order.status = 'shipped'
+                from django.utils import timezone
+                order.shipped_at = timezone.now()
+                order.save()
+                
+                # Отправляем email уведомление
+                from .emails import send_shipping_notification
+                send_shipping_notification(order, order.tracking_number)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Заказ на доставку Почты России создан',
+                    'tracking_number': order.tracking_number,
+                    'order_id': result.get('order_id'),
+                    'batch_name': result.get('batch_name')
+                })
+            else:
+                return Response(
+                    {'error': result.get('error', 'Ошибка создания заказа в Почте России')},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        else:
+            return Response(
+                {'error': f'Неизвестный провайдер доставки: {provider}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    except Exception as e:
+        logging.error(f'Error creating delivery order: {str(e)}', exc_info=True)
+        return Response(
+            {'error': f'Ошибка создания заказа на доставку: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET'])
@@ -1504,3 +2359,59 @@ def sync_cart(request):
     print(f"Sync completed. Final cart items: {cart.items.count()}")
     print(f"Response data: {serializer.data}")
     return Response(serializer.data)
+
+
+class ProductBatchDetailView(APIView):
+    """
+    Получение актуальных данных для списка товаров по их ID.
+    Используется для синхронизации цен в корзине.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        perfume_ids = request.data.get('perfumes', [])
+        pigment_ids = request.data.get('pigments', [])
+
+        # Валидация входных данных
+        if not isinstance(perfume_ids, list) or not isinstance(pigment_ids, list):
+            return Response(
+                {'error': 'perfumes и pigments должны быть списками'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        perfumes = Perfume.objects.filter(id__in=perfume_ids)
+        pigments = Pigment.objects.filter(id__in=pigment_ids)
+
+        perfume_serializer = PerfumeListSerializer(perfumes, many=True, context={'request': request})
+        pigment_serializer = PigmentListSerializer(pigments, many=True, context={'request': request})
+
+        return Response({
+            'perfumes': perfume_serializer.data,
+            'pigments': pigment_serializer.data,
+        })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@authentication_classes([])  # Отключаем аутентификацию
+def sync_product_prices(request):
+    """Синхронизация цен товаров для корзины"""
+    perfume_ids = request.data.get('perfumes', [])
+    pigment_ids = request.data.get('pigments', [])
+
+    if not isinstance(perfume_ids, list) or not isinstance(pigment_ids, list):
+        return Response(
+            {'error': 'perfumes и pigments должны быть списками'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    perfumes = Perfume.objects.filter(id__in=perfume_ids)
+    pigments = Pigment.objects.filter(id__in=pigment_ids)
+
+    perfume_serializer = PerfumeListSerializer(perfumes, many=True, context={'request': request})
+    pigment_serializer = PigmentListSerializer(pigments, many=True, context={'request': request})
+
+    return Response({
+        'perfumes': perfume_serializer.data,
+        'pigments': pigment_serializer.data,
+    })

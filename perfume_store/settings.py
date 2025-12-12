@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django_filters',
     'corsheaders',
     'store',
+    'adminpanel',
     # Django Allauth
     'django.contrib.sites',
     'allauth',
@@ -58,6 +59,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -73,7 +75,7 @@ ROOT_URLCONF = 'perfume_store.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -146,7 +148,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+]
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -220,8 +227,16 @@ SITE_ID = 1
 ACCOUNT_EMAIL_VERIFICATION = 'none'
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
-ACCOUNT_AUTHENTICATION_METHOD = 'email'
+# Разрешаем вход по email или username
+ACCOUNT_AUTHENTICATION_METHOD = 'username_email'
 ACCOUNT_ADAPTER = 'store.adapters.CustomAccountAdapter'
+ACCOUNT_FORMS = {
+    'login': 'store.forms.AdminLoginForm',
+}
+
+# URL для перенаправления при необходимости авторизации
+LOGIN_URL = '/accounts/login/'
+LOGIN_REDIRECT_URL = '/admin-panel/'
 
 SOCIALACCOUNT_ADAPTER = 'store.adapters.CustomSocialAccountAdapter'
 SOCIALACCOUNT_PROVIDERS = {
@@ -254,6 +269,9 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')  # App Password для Gmail
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
+
+# Frontend URL для магических ссылок в письмах
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Payment providers settings
 # ЮKassa
@@ -288,10 +306,16 @@ LOGGING = {
             'format': '[%(asctime)s] %(levelname)s %(name)s: %(message)s',
         },
     },
+    'filters': {
+        'suppress_profile_401': {
+            '()': 'store.middleware.SuppressProfile401Filter',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['suppress_profile_401'],
         },
     },
     'loggers': {
@@ -304,6 +328,12 @@ LOGGING = {
             'handlers': ['console'],
             'level': 'INFO' if DEBUG else 'WARNING',
             'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+            'filters': ['suppress_profile_401'],
         },
     },
     'root': {

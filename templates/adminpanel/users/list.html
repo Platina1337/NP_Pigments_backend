@@ -1,0 +1,126 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Пользователи{% endblock %}
+{% block extra_head %}
+<style>
+    .users-filters {
+        background: linear-gradient(135deg, var(--card), var(--panel));
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 24px;
+        border: 1px solid rgba(255,255,255,0.08);
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .users-filters input {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .users-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .stat-card {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid rgba(255,255,255,0.08);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        background: rgba(6, 182, 212, 0.1);
+        color: var(--accent);
+    }
+
+    .stat-info h3 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text);
+    }
+
+    .stat-info p {
+        margin: 4px 0 0 0;
+        color: var(--muted);
+        font-size: 14px;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<!-- Статистика пользователей -->
+<div class="users-stats">
+    <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-info">
+            <h3>{{ page_obj.paginator.count }}</h3>
+            <p>Всего пользователей</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">👑</div>
+        <div class="stat-info">
+            <h3>{{ users|length }}</h3>
+            <p>На странице</p>
+        </div>
+    </div>
+</div>
+
+<!-- Фильтры -->
+<div class="users-filters">
+    <form method="get" class="js-async-filter" data-target="#users-list" style="display:flex; gap:16px; flex:1; flex-wrap:wrap;">
+        <input name="q" placeholder="Поиск по email, username или имени" value="{{ search|default:'' }}" style="flex:1; min-width:200px;">
+
+        <div class="custom-select-wrapper enhanced" style="min-width:150px;">
+            <select name="staff">
+                <option value="">Все роли</option>
+                <option value="staff" {% if staff_filter == "staff" %}selected{% endif %}>Администраторы</option>
+                <option value="regular" {% if staff_filter == "regular" %}selected{% endif %}>Пользователи</option>
+            </select>
+        </div>
+
+        <div class="custom-select-wrapper enhanced" style="min-width:150px;">
+            <select name="active">
+                <option value="">Все статусы</option>
+                <option value="active" {% if active_filter == "active" %}selected{% endif %}>Активные</option>
+                <option value="inactive" {% if active_filter == "inactive" %}selected{% endif %}>Неактивные</option>
+            </select>
+        </div>
+
+        <div class="custom-select-wrapper enhanced" style="min-width:150px;">
+            <select name="date">
+                <option value="">Все даты</option>
+                <option value="today" {% if date_filter == "today" %}selected{% endif %}>Сегодня</option>
+                <option value="week" {% if date_filter == "week" %}selected{% endif %}>За неделю</option>
+                <option value="month" {% if date_filter == "month" %}selected{% endif %}>За месяц</option>
+            </select>
+        </div>
+
+        <button type="submit" class="btn" style="padding:10px 16px;">🔍 Найти</button>
+        {% if search or staff_filter or active_filter or date_filter %}
+            <a href="{% url 'adminpanel:user_list' %}" class="btn secondary" style="padding:10px 16px;">🗑️ Сбросить</a>
+        {% endif %}
+    </form>
+</div>
+
+<!-- Список пользователей -->
+<div id="users-list">
+    {% include "adminpanel/users/_list.html" %}
+</div>
+{% endblock %}
+

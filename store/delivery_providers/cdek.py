@@ -157,28 +157,55 @@ class CDEKProvider:
         Создание заказа на доставку
         
         Args:
-            order_data: данные заказа
+            order_data: данные заказа в формате CDEK API
             
         Returns:
             dict: результат создания заказа
         """
         try:
+            # Проверяем наличие учетных данных
+            if not self.account or not self.secret_key:
+                return {
+                    'success': False,
+                    'error': 'CDEK credentials not configured. Set CDEK_ACCOUNT and CDEK_SECRET_KEY in settings.'
+                }
+            
             response = self._make_request('POST', 'orders', data=order_data)
             
             if response.status_code in [200, 201]:
                 result = response.json()
+                entity = result.get('entity', {})
+                
                 return {
                     'success': True,
-                    'order_uuid': result.get('entity', {}).get('uuid'),
-                    'cdek_number': result.get('entity', {}).get('cdek_number'),
+                    'order_uuid': entity.get('uuid'),
+                    'cdek_number': entity.get('cdek_number'),
+                    'request_uuid': result.get('request_uuid'),
                     'data': result
                 }
             else:
-                error_data = response.json()
-                return {
-                    'success': False,
-                    'error': error_data.get('errors', [{}])[0].get('message', 'Unknown error')
-                }
+                try:
+                    error_data = response.json()
+                    error_message = 'Unknown error'
+                    if 'errors' in error_data and len(error_data['errors']) > 0:
+                        error_message = error_data['errors'][0].get('message', 'Unknown error')
+                    elif 'error' in error_data:
+                        error_message = error_data['error']
+                    elif 'message' in error_data:
+                        error_message = error_data['message']
+                    
+                    return {
+                        'success': False,
+                        'error': error_message,
+                        'status_code': response.status_code,
+                        'response': error_data
+                    }
+                except:
+                    return {
+                        'success': False,
+                        'error': f'API error: {response.status_code} - {response.text[:200]}',
+                        'status_code': response.status_code
+                    }
                 
         except Exception as e:
             return {
@@ -197,34 +224,57 @@ class CDEKProvider:
             dict: информация об отслеживании
         """
         try:
+            # Проверяем наличие учетных данных
+            if not self.account or not self.secret_key:
+                return {
+                    'success': False,
+                    'error': 'CDEK credentials not configured'
+                }
+            
+            # Используем правильный формат запроса для получения заказа по номеру
             response = self._make_request(
                 'GET', 
-                'orders',
-                params={'cdek_number': cdek_number}
+                f'orders/{cdek_number}'
             )
             
             if response.status_code == 200:
                 result = response.json()
-                entities = result.get('entities', [])
+                entity = result.get('entity', {})
                 
-                if entities:
-                    order = entities[0]
+                if entity:
+                    statuses = entity.get('statuses', [])
+                    last_status = statuses[-1] if statuses else {}
+                    
                     return {
                         'success': True,
-                        'status': order.get('statuses', [{}])[-1].get('name') if order.get('statuses') else 'Неизвестно',
-                        'location': order.get('statuses', [{}])[-1].get('city') if order.get('statuses') else None,
-                        'data': order
+                        'status': last_status.get('name', 'Неизвестно'),
+                        'status_code': last_status.get('code'),
+                        'location': last_status.get('city'),
+                        'date': last_status.get('date_time'),
+                        'cdek_number': entity.get('cdek_number'),
+                        'order_uuid': entity.get('uuid'),
+                        'all_statuses': statuses,
+                        'data': entity
                     }
                 else:
                     return {
                         'success': False,
-                        'error': 'Order not found'
+                        'error': 'Order not found in response'
                     }
             else:
-                return {
-                    'success': False,
-                    'error': f'API error: {response.status_code}'
-                }
+                try:
+                    error_data = response.json()
+                    return {
+                        'success': False,
+                        'error': error_data.get('message', f'API error: {response.status_code}'),
+                        'status_code': response.status_code
+                    }
+                except:
+                    return {
+                        'success': False,
+                        'error': f'API error: {response.status_code}',
+                        'status_code': response.status_code
+                    }
                 
         except Exception as e:
             return {

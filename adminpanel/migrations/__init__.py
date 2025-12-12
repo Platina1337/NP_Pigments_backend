@@ -1,0 +1,2 @@
+# Generated for adminpanel app
+

@@ -1,0 +1,82 @@
+<div class="product-grid">
+    {% for u in users %}
+    <div class="user-card">
+        <div class="user-card-header">
+            <div class="user-avatar">
+                {% if u.profile.avatar %}
+                    <img src="{{ u.profile.avatar.url }}" alt="Аватар {{ u.username }}">
+                {% else %}
+                    <div class="default-avatar">{{ u.username|first|upper }}</div>
+                {% endif %}
+            </div>
+            <div class="user-info">
+                <h4>{{ u.username }}</h4>
+                <p>{{ u.email }}</p>
+                <div class="user-meta">
+                    <span class="user-id">#{{ u.id }}</span>
+                    {% if u.is_staff %}
+                        <span class="user-badge staff">Админ</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="user-card-body">
+            <div class="user-stats">
+                <div class="stat">
+                    <span class="stat-label">Заказы</span>
+                    <span class="stat-value">{{ u.orders.count }}</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Баланс</span>
+                    <span class="stat-value">{{ u.loyalty_account.balance|default:0 }} ₽</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Дата регистрации</span>
+                    <span class="stat-value">{{ u.date_joined|date:"d.m.Y" }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="user-card-footer">
+            <div class="user-actions">
+                <a href="{% url 'adminpanel:user_detail' u.id %}?mode=view" class="btn secondary" style="font-size:13px; padding:6px 12px;">
+                    👁️ Просмотр
+                </a>
+                <a href="{% url 'adminpanel:user_detail' u.id %}?mode=edit" class="btn" style="font-size:13px; padding:6px 12px;">
+                    ✏️ Редактировать
+                </a>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="empty-state">
+        <div style="text-align:center; padding:40px; color:var(--muted);">
+            <div style="font-size:48px; margin-bottom:16px;">👥</div>
+            <h3>Пользователи не найдены</h3>
+            <p>Попробуйте изменить параметры поиска</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% if page_obj.has_other_pages %}
+<div class="pagination-container">
+    <div class="pagination-info">
+        <span>Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+        <span class="pagination-total">Всего: {{ page_obj.paginator.count }} пользователей</span>
+    </div>
+    <div class="pagination-controls">
+        {% if page_obj.has_previous %}
+            <a class="btn secondary" data-async-page="1" href="?page={{ page_obj.previous_page_number }}{% if base_qs %}&{{ base_qs }}{% endif %}">
+                ← Предыдущая
+            </a>
+        {% endif %}
+        {% if page_obj.has_next %}
+            <a class="btn secondary" data-async-page="1" href="?page={{ page_obj.next_page_number }}{% if base_qs %}&{{ base_qs }}{% endif %}">
+                Следующая →
+            </a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+

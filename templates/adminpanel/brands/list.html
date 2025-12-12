@@ -1,0 +1,14 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Бренды{% endblock %}
+{% block content %}
+<div class="topbar">
+    <form class="js-async-filter" data-target="#brands-list" method="get" style="display:flex; gap:8px; align-items:center;">
+        <input name="q" placeholder="Поиск по названию/стране" value="{{ search|default:'' }}">
+    </form>
+    <a class="btn" href="{% url 'adminpanel:brand_create' %}">Добавить бренд</a>
+</div>
+<div id="brands-list">
+    {% include "adminpanel/brands/_list.html" %}
+</div>
+{% endblock %}
+

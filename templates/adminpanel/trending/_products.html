@@ -1,0 +1,124 @@
+{% if perfumes or pigments %}
+
+    {% if perfumes %}
+    <div class="products-section">
+        <div class="products-section-header">
+            <div class="products-section-title">
+                <span>🧴</span>
+                Парфюмы
+                <span class="products-section-count">({{ perfumes|length }})</span>
+            </div>
+            <label class="select-all-toggle">
+                <span>Выбрать все парфюмы</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-perfume" onchange="toggleSection('perfume')">
+                    <span class="toggle-slider"></span>
+                </label>
+            </label>
+        </div>
+
+        <div class="product-grid-improved">
+            {% for item in perfumes %}
+            {% with val="perfume:"|add:item.id|stringformat:"s" %}
+            <div class="product-card-improved {% if item.is_on_sale %}has-discount{% endif %} {% if val in selected_ids %}selected{% endif %}"
+                 data-type="perfume"
+                 data-id="{{ item.id }}"
+                 data-value="perfume:{{ item.id }}">
+                <div class="product-card-main">
+                    <div class="product-card-image">
+                        {% if item.image %}
+                        <img src="{{ item.image.url }}" alt="{{ item.name }}" loading="lazy">
+                        {% else %}
+                        🧴
+                        {% endif %}
+                    </div>
+                    <div class="product-card-details">
+                        <h5 class="product-card-name" title="{{ item.name }}">{{ item.name }}</h5>
+                        <p class="product-card-meta">{{ item.brand.name }}</p>
+                        {% if item.category %}
+                        <p class="product-card-meta">{{ item.category.name }} • {{ item.volume_ml }} мл</p>
+                        {% endif %}
+                        <div class="product-card-price">
+                            <span class="product-card-current-price">{{ item.price|floatformat:0 }} ₽</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endwith %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if perfumes and pigments %}
+    <div class="section-divider"></div>
+    {% endif %}
+
+    {% if pigments %}
+    <div class="products-section">
+        <div class="products-section-header">
+            <div class="products-section-title">
+                <span>🎨</span>
+                Пигменты
+                <span class="products-section-count">({{ pigments|length }})</span>
+            </div>
+            <label class="select-all-toggle">
+                <span>Выбрать все пигменты</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-pigment" onchange="toggleSection('pigment')">
+                    <span class="toggle-slider"></span>
+                </label>
+            </label>
+        </div>
+
+        <div class="product-grid-improved">
+            {% for item in pigments %}
+            {% with val="pigment:"|add:item.id|stringformat:"s" %}
+            <div class="product-card-improved {% if item.is_on_sale %}has-discount{% endif %} {% if val in selected_ids %}selected{% endif %}"
+                 data-type="pigment"
+                 data-id="{{ item.id }}"
+                 data-value="pigment:{{ item.id }}">
+                <div class="product-card-main">
+                    <div class="product-card-image">
+                        {% if item.image %}
+                        <img src="{{ item.image.url }}" alt="{{ item.name }}" loading="lazy">
+                        {% else %}
+                        🎨
+                        {% endif %}
+                    </div>
+                    <div class="product-card-details">
+                        <h5 class="product-card-name" title="{{ item.name }}">{{ item.name }}</h5>
+                        <p class="product-card-meta">{{ item.brand.name }}</p>
+                        {% if item.category %}
+                        <p class="product-card-meta">{{ item.category.name }} • {{ item.weight_gr }} г</p>
+                        {% endif %}
+                        <div class="product-card-price">
+                            <span class="product-card-current-price">{{ item.price|floatformat:0 }} ₽</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endwith %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+{% else %}
+<div class="empty-state">
+    <div class="empty-state-icon">📦</div>
+    <div class="empty-state-title">Товары не найдены</div>
+    <p>Попробуйте изменить параметры фильтрации</p>
+</div>
+{% endif %}
+
+<!-- Скрытые чекбоксы для формы -->
+<div id="hidden-checkboxes" style="display: none;">
+    {% for item in perfumes %}
+    <input type="checkbox" name="items" value="perfume:{{ item.id }}" id="hidden-perfume-{{ item.id }}" {% if "perfume:"|add:item.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+    {% endfor %}
+    {% for item in pigments %}
+    <input type="checkbox" name="items" value="pigment:{{ item.id }}" id="hidden-pigment-{{ item.id }}" {% if "pigment:"|add:item.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+    {% endfor %}
+</div>
+

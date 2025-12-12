@@ -1,0 +1,49 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Заказ #{{ order.id }}{% endblock %}
+{% block content %}
+<div class="card">
+    <h3>Основное</h3>
+    <p>Пользователь: {{ order.user.email }}</p>
+    <p>Статус: {{ order.get_status_display }}</p>
+    <p>Оплата: {{ order.get_payment_method_display }}</p>
+    <p>Доставка: {{ order.get_delivery_method_display }}</p>
+    <p>Адрес: {{ order.delivery_city }}, {{ order.delivery_address }} ({{ order.delivery_postal_code }})</p>
+    <p>Телефон: {{ order.delivery_phone }}</p>
+    <p>Трек-номер: {{ order.tracking_number|default:"—" }}</p>
+</div>
+
+<div class="card">
+    <h3>Позиции</h3>
+    <table>
+        <thead><tr><th>Товар</th><th>Кол-во</th><th>Цена</th><th>Итого</th></tr></thead>
+        <tbody>
+            {% for item in order.items.all %}
+            <tr>
+                <td>{{ item.product_name }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.unit_price }} ₽</td>
+                <td>{{ item.total_price }} ₽</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4">Нет позиций</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p><strong>Subtotal:</strong> {{ order.subtotal }} ₽</p>
+    <p><strong>Доставка:</strong> {{ order.delivery_cost }} ₽</p>
+    <p><strong>Скидка баллами:</strong> -{{ order.loyalty_discount }} ₽</p>
+    <p><strong>Итого:</strong> {{ order.total }} ₽</p>
+</div>
+
+<div class="card">
+    <h3>Изменить статус</h3>
+    <form method="post" action="{% url 'adminpanel:order_status_update' order.id %}">
+        {% csrf_token %}
+        <input type="hidden" name="updated_at" value="{{ order.updated_at|date:'c' }}">
+        {{ form.as_p }}
+        <button class="btn" type="submit">Сохранить</button>
+        <a class="btn secondary" href="{% url 'adminpanel:order_list' %}">Назад</a>
+    </form>
+</div>
+{% endblock %}
+

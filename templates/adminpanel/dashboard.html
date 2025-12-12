@@ -1,0 +1,59 @@
+{% extends "adminpanel/base.html" %}
+{% block title %}Дашборд{% endblock %}
+{% block page_title %}Дашборд{% endblock %}
+{% block page_subtitle %}Ключевые метрики магазина{% endblock %}
+
+{% block content %}
+<div class="grid grid-3">
+    <div class="card">
+        <div style="font-size:12px; text-transform:uppercase; color:rgba(229,231,235,0.6);">Выручка</div>
+        <div style="font-size:28px; font-weight:700;">{{ total_revenue|default:0 }} ₽</div>
+    </div>
+    <div class="card">
+        <div style="font-size:12px; text-transform:uppercase; color:rgba(229,231,235,0.6);">Ожидают оплаты</div>
+        <div style="font-size:28px; font-weight:700;">{{ pending_orders }}</div>
+    </div>
+    <div class="card">
+        <div style="font-size:12px; text-transform:uppercase; color:rgba(229,231,235,0.6);">В обработке</div>
+        <div style="font-size:28px; font-weight:700;">{{ processing_orders }}</div>
+    </div>
+    <div class="card">
+        <div style="font-size:12px; text-transform:uppercase; color:rgba(229,231,235,0.6);">Доставлено</div>
+        <div style="font-size:28px; font-weight:700;">{{ delivered }}</div>
+    </div>
+    <div class="card">
+        <div style="font-size:12px; text-transform:uppercase; color:rgba(229,231,235,0.6);">Заказы за 7 дней</div>
+        <div style="font-size:28px; font-weight:700;">{{ orders_last_week }}</div>
+    </div>
+</div>
+
+<div class="grid grid-3">
+    <div class="card">
+        <h3 style="margin:0 0 8px 0;">Топ парфюмы</h3>
+        <table>
+            <thead><tr><th>Товар</th><th>Кол-во</th></tr></thead>
+            <tbody>
+                {% for p in top_perfumes %}
+                <tr><td>{{ p.perfume__name }}</td><td>{{ p.total_qty }}</td></tr>
+                {% empty %}
+                <tr><td colspan="2">Нет данных</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="card">
+        <h3 style="margin:0 0 8px 0;">Топ пигменты</h3>
+        <table>
+            <thead><tr><th>Товар</th><th>Кол-во</th></tr></thead>
+            <tbody>
+                {% for p in top_pigments %}
+                <tr><td>{{ p.pigment__name }}</td><td>{{ p.total_qty }}</td></tr>
+                {% empty %}
+                <tr><td colspan="2">Нет данных</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,43 @@
+{% load i18n %}
+{% load account socialaccount %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{% trans "Вход" %}</title>
+    <link rel="stylesheet" href="{% static 'auth.css' %}">
+</head>
+<body class="auth-body">
+    <div class="auth-card">
+        <h1 class="auth-title">{% trans "Вход" %}</h1>
+        <p class="auth-subtitle">{% trans "Вход только для администраторов (staff/superuser)" %}</p>
+
+        {% if form.errors %}
+            <div class="auth-alert error">
+                {% for field, errors in form.errors.items %}
+                    {% for error in errors %}
+                        <div>{{ error }}</div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <form class="auth-form" method="post" action="{% url 'account_login' %}">
+            {% csrf_token %}
+            <label for="{{ form.login.id_for_label }}">{% trans "Email или логин" %}</label>
+            {{ form.login }}
+
+            <label for="{{ form.password.id_for_label }}">{% trans "Пароль" %}</label>
+            {{ form.password }}
+
+            <button class="auth-btn" type="submit">{% trans "Войти" %}</button>
+        </form>
+
+        <div class="auth-footer" style="text-align:center; color:var(--muted); font-size:13px;">
+            {% trans "Авторизация доступна только существующим администраторам." %}
+        </div>
+    </div>
+</body>
+</html>
+

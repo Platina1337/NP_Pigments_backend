@@ -1,0 +1,1380 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Управление акциями{% endblock %}
+{% block extra_head %}
+<style>
+    /* Sticky панель создания скидки */
+    .discount-builder {
+        position: relative;
+        background: linear-gradient(135deg, #1a1f2e 0%, #111827 100%);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border: 1px solid rgba(6, 182, 212, 0.2);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    
+    .discount-builder-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    
+    .discount-builder-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .discount-builder-title::before {
+        content: '🏷️';
+        font-size: 22px;
+    }
+    
+    /* Счётчик выбранных */
+    .selection-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(6, 182, 212, 0.1));
+        border: 1px solid rgba(6, 182, 212, 0.3);
+        padding: 8px 16px;
+        border-radius: 24px;
+        font-size: 14px;
+        color: var(--accent);
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .selection-badge.has-selection {
+        background: linear-gradient(135deg, rgba(6, 182, 212, 0.3), rgba(6, 182, 212, 0.15));
+        animation: pulse-glow 2s ease-in-out infinite;
+    }
+
+    .selection-badge.limit-reached {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(239, 68, 68, 0.15));
+        border-color: rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+    }
+    
+    @keyframes pulse-glow {
+        0%, 100% { box-shadow: 0 0 10px rgba(6, 182, 212, 0.3); }
+        50% { box-shadow: 0 0 20px rgba(6, 182, 212, 0.5); }
+    }
+    
+    .selection-badge-count {
+        background: var(--accent);
+        color: #0b0f1a;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-weight: 700;
+        min-width: 28px;
+        text-align: center;
+    }
+    
+    /* Табы для типа скидки */
+    .discount-type-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 6px;
+        border-radius: 12px;
+    }
+    
+    .discount-type-tab {
+        flex: 1;
+        padding: 12px 16px;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 500;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-align: center;
+    }
+    
+    .discount-type-tab:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+    }
+    
+    .discount-type-tab.active {
+        background: var(--accent);
+        color: #0b0f1a;
+        font-weight: 600;
+    }
+    
+    /* Поля скидки */
+    .discount-fields {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 20px;
+    }
+    
+    .discount-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .discount-field label {
+        font-size: 13px;
+        color: rgba(229, 231, 235, 0.7);
+        font-weight: 500;
+    }
+    
+    .discount-field input {
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        color: var(--text);
+        font-size: 15px;
+        transition: all 0.2s ease;
+    }
+    
+    .discount-field input:focus {
+        outline: none;
+        border-color: var(--accent);
+        background: rgba(255, 255, 255, 0.08);
+        box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.1);
+    }
+    
+    .discount-field input::placeholder {
+        color: rgba(229, 231, 235, 0.3);
+    }
+    
+    .discount-field.hidden {
+        display: none;
+    }
+    
+    /* Предпросмотр скидки */
+    .discount-preview {
+        background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(34, 197, 94, 0.05));
+        border: 1px solid rgba(34, 197, 94, 0.3);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 20px;
+        display: none;
+    }
+    
+    .discount-preview.visible {
+        display: block;
+        animation: slideDown 0.3s ease;
+    }
+    
+    @keyframes slideDown {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .discount-preview-title {
+        font-size: 13px;
+        color: rgba(34, 197, 94, 0.8);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+    
+    .discount-preview-content {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+    
+    .discount-preview-example {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 15px;
+    }
+    
+    .price-old {
+        text-decoration: line-through;
+        color: var(--muted);
+    }
+    
+    .price-new {
+        color: #22c55e;
+        font-weight: 700;
+        font-size: 18px;
+    }
+    
+    .price-arrow {
+        color: var(--muted);
+    }
+    
+    .discount-preview-savings {
+        background: rgba(34, 197, 94, 0.2);
+        color: #22c55e;
+        padding: 4px 12px;
+        border-radius: 16px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    
+    /* Кнопки действий */
+    .discount-actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    
+    .discount-actions .btn {
+        flex: 1;
+        min-width: 180px;
+        padding: 14px 24px;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 0.3s ease;
+        border: none;
+        cursor: pointer;
+    }
+    
+    .btn-apply {
+        background: linear-gradient(135deg, #06b6d4, #0891b2);
+        color: #0b0f1a;
+    }
+    
+    .btn-apply:hover:not(:disabled) {
+        background: linear-gradient(135deg, #0891b2, #0e7490);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(6, 182, 212, 0.4);
+    }
+    
+    .btn-apply:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .btn-clear {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    
+    .btn-clear:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.25);
+    }
+    
+    .btn-clear:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    /* Фильтры */
+    .filters-panel {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    
+    .filters-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+    }
+    
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .filter-group label {
+        font-size: 12px;
+        color: rgba(229, 231, 235, 0.6);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 500;
+    }
+    
+    /* Быстрые действия над товарами */
+    .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 16px;
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    
+    .quick-action-btn {
+        padding: 8px 14px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--muted);
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .quick-action-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+    
+    .quick-action-btn.active {
+        background: var(--accent);
+        color: #0b0f1a;
+        border-color: var(--accent);
+    }
+    
+    /* Сетка товаров */
+    .products-section {
+        background: var(--card);
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    
+    .products-section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    
+    .products-section-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .products-section-count {
+        color: var(--accent);
+        font-weight: 500;
+    }
+    
+    .select-all-toggle {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--muted);
+        cursor: pointer;
+    }
+    
+    .select-all-toggle:hover {
+        color: var(--text);
+    }
+    
+    /* Улучшенные карточки товаров */
+    .product-grid-improved {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
+    }
+    
+    .product-card-improved {
+        background: var(--panel);
+        border-radius: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.06);
+        padding: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        position: relative;
+    }
+    
+    .product-card-improved:hover {
+        border-color: rgba(255, 255, 255, 0.12);
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+    
+    .product-card-improved.selected {
+        border-color: var(--accent);
+        background: linear-gradient(135deg, rgba(6, 182, 212, 0.08), rgba(6, 182, 212, 0.02));
+    }
+    
+    .product-card-improved.selected::after {
+        content: '✓';
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 24px;
+        height: 24px;
+        background: var(--accent);
+        color: #0b0f1a;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: bold;
+        animation: checkIn 0.2s ease;
+    }
+    
+    @keyframes checkIn {
+        from { transform: scale(0); }
+        to { transform: scale(1); }
+    }
+    
+    .product-card-improved.has-discount {
+        border-color: rgba(34, 197, 94, 0.4);
+    }
+    
+    .product-card-improved.has-discount::before {
+        content: '🏷️ Скидка';
+        position: absolute;
+        top: -8px;
+        left: 12px;
+        background: linear-gradient(135deg, #22c55e, #16a34a);
+        color: white;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 10px;
+        z-index: 1;
+    }
+    
+    .product-card-main {
+        display: flex;
+        gap: 12px;
+    }
+    
+    .product-card-image {
+        width: 64px;
+        height: 64px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        flex-shrink: 0;
+        overflow: hidden;
+    }
+    
+    .product-card-image img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    
+    .product-card-details {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .product-card-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text);
+        margin: 0 0 4px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .product-card-meta {
+        font-size: 12px;
+        color: var(--muted);
+        margin: 0;
+    }
+    
+    .product-card-price {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-top: 8px;
+    }
+    
+    .product-card-current-price {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
+    }
+    
+    .product-card-original-price {
+        font-size: 12px;
+        color: var(--muted);
+        text-decoration: line-through;
+    }
+    
+    .product-card-discount-badge {
+        font-size: 11px;
+        background: rgba(6, 182, 212, 0.15);
+        color: var(--accent);
+        padding: 2px 8px;
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    
+    /* Разделитель секций */
+    .section-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+        margin: 24px 0;
+    }
+    
+    /* Адаптивность */
+    @media (max-width: 768px) {
+        .discount-builder {
+            position: relative;
+            padding: 16px;
+            margin: -24px -24px 16px -24px;
+            border-radius: 0;
+        }
+        
+        .discount-builder-header {
+            flex-direction: column;
+            gap: 12px;
+            align-items: flex-start;
+        }
+        
+        .discount-type-tabs {
+            flex-direction: column;
+        }
+        
+        .discount-fields {
+            grid-template-columns: 1fr;
+        }
+        
+        .discount-actions {
+            flex-direction: column;
+        }
+        
+        .discount-actions .btn {
+            min-width: auto;
+        }
+        
+        .filters-row {
+            grid-template-columns: 1fr 1fr;
+        }
+        
+        .quick-actions {
+            overflow-x: auto;
+            flex-wrap: nowrap;
+            padding-bottom: 8px;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .quick-action-btn {
+            flex-shrink: 0;
+        }
+        
+        .product-grid-improved {
+            grid-template-columns: 1fr;
+        }
+        
+        .products-section-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 12px;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .filters-row {
+            grid-template-columns: 1fr;
+        }
+        
+        .discount-preview-content {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+    
+    /* Лоадер */
+    .products-loader {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: var(--muted);
+    }
+    
+    .loader-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(6, 182, 212, 0.2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    
+    /* Пустое состояние */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--muted);
+    }
+    
+    .empty-state-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+    
+    .empty-state-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 8px;
+    }
+
+    .hidden {
+        display: none !important;
+    }
+    
+    /* Сообщения */
+    .messages {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1000;
+        max-width: 400px;
+    }
+    
+    .message {
+        animation: slideIn 0.3s ease;
+    }
+    
+    @keyframes slideIn {
+        from { opacity: 0; transform: translateX(20px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Форма управления скидками и промо -->
+
+<form method="post" id="discount-form">
+    {% csrf_token %}
+    
+    <!-- Панель создания/редактирования акции (sticky) -->
+    <div class="discount-builder">
+        <div class="discount-builder-header">
+            <div class="discount-builder-title">
+                {% if editing_promo %}
+                    Редактирование акции: {{ editing_promo.title|default:'Без названия' }}
+                {% else %}
+                    Создать акцию
+                {% endif %}
+            </div>
+            <div class="selection-badge" id="selection-badge">
+                <span>Выбрано товаров:</span>
+                <span class="selection-badge-count" id="selected-count">0</span>
+            </div>
+        </div>
+
+        <!-- Табы типа скидки -->
+        <div class="discount-type-tabs">
+            <button type="button" class="discount-type-tab{% if not editing_promo %} active{% endif %}" data-type="percentage" onclick="setDiscountType('percentage')">
+                📊 Скидка в процентах
+            </button>
+            <button type="button" class="discount-type-tab" data-type="fixed" onclick="setDiscountType('fixed')">
+                💰 Фиксированная цена
+            </button>
+            <button type="button" class="discount-type-tab{% if editing_promo %} active{% endif %}" data-type="promo" onclick="setDiscountType('promo')">
+                📣 Промо (слоты)
+            </button>
+        </div>
+
+        <!-- Поля скидки (видны всегда, включая редактирование промо) -->
+        <div class="discount-fields">
+            <div class="discount-field" id="field-percentage">
+                <label>Размер скидки (%)</label>
+                <input type="number" name="discount_percentage_input" id="input-percentage"
+                       min="0" max="100" placeholder="Например: 20"
+                       oninput="updatePreview()" value="{% if editing_promo and promo_data.discount_percentage %}{{ promo_data.discount_percentage }}{% endif %}">
+            </div>
+            <div class="discount-field hidden" id="field-fixed">
+                <label>Новая цена (₽)</label>
+                <input type="number" name="discount_price_input" id="input-fixed"
+                       min="0" step="0.01" placeholder="Например: 5000"
+                       oninput="updatePreview()" value="{% if editing_promo and promo_data.discount_price %}{{ promo_data.discount_price }}{% endif %}">
+            </div>
+            <div class="discount-field">
+                <label>Начало акции (опционально)</label>
+                <input type="datetime-local" name="discount_start_date" id="input-start" value="{% if editing_promo and promo_data.start_at %}{{ promo_data.start_at|slice:':16' }}{% endif %}">
+            </div>
+            <div class="discount-field">
+                <label>Конец акции (опционально)</label>
+                <input type="datetime-local" name="discount_end_date" id="input-end" value="{% if editing_promo and promo_data.end_at %}{{ promo_data.end_at|slice:':16' }}{% endif %}">
+            </div>
+        </div>
+
+        {% if not editing_promo %}
+        <!-- Предпросмотр -->
+        <div class="discount-preview" id="discount-preview">
+            <div class="discount-preview-title">⚡ Предпросмотр скидки</div>
+            <div class="discount-preview-content">
+                <div class="discount-preview-example">
+                    <span>Пример: товар за</span>
+                    <span class="price-old" id="preview-old">10 000 ₽</span>
+                    <span class="price-arrow">→</span>
+                    <span class="price-new" id="preview-new">8 000 ₽</span>
+                </div>
+                <div class="discount-preview-savings" id="preview-savings">Экономия: 2 000 ₽ (20%)</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Параметры промо для главной (создание/редактирование промо-акции) -->
+        <div class="glass-card mt-4 p-4 rounded-2xl border border-cyan-500/30 promo-block" id="promo-block" style="{% if editing_promo %}display:block;{% else %}display:none;{% endif %}">
+            <div class="flex items-center justify-between mb-2">
+                <div class="text-sm font-semibold text-white">
+                    {% if editing_promo %}
+                        Обновление промо-акции
+                    {% else %}
+                        Промо на главной (слоты)
+                    {% endif %}
+                </div>
+                <span class="text-[11px] text-slate-300/70">Использует выбранные товары ниже</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="discount-field">
+                    <label>Название акции (опц.)</label>
+                    <input type="text" name="promo_title" id="promo-title" class="w-full p-2 rounded-md bg-slate-800 border border-slate-700 text-white" placeholder="Например: Акция бренда" value="{{ promo_data.title|default:'' }}">
+                </div>
+                <div class="discount-field">
+                    <label>Слот</label>
+                    <select name="promo_slot" id="promo-slot" class="w-full p-2 rounded-md bg-slate-800 border border-slate-700 text-white">
+                        <option value="homepage_deals_1" {% if promo_data.slot == 'homepage_deals_1' %}selected{% endif %}>Главная — блок акций 1</option>
+                        <option value="homepage_deals_2" {% if promo_data.slot == 'homepage_deals_2' %}selected{% endif %}>Главная — блок акций 2</option>
+                        <option value="homepage_deals_3" {% if promo_data.slot == 'homepage_deals_3' %}selected{% endif %}>Главная — блок акций 3</option>
+                    </select>
+                </div>
+                <div class="discount-field">
+                    <label>Приоритет (меньше — выше)</label>
+                    <input type="number" name="promo_priority" id="promo-priority" value="{{ promo_data.priority|default:0 }}" class="w-full p-2 rounded-md bg-slate-800 border border-slate-700 text-white">
+                </div>
+            </div>
+            <!-- Скидка и даты берутся из основных полей; дублируем в hidden -->
+            <input type="hidden" name="promo_discount_percentage" id="promo_discount_percentage">
+            <input type="hidden" name="promo_discount_price" id="promo_discount_price">
+            <input type="hidden" name="promo_start" id="promo_start">
+            <input type="hidden" name="promo_end" id="promo_end">
+            <p class="text-[11px] text-slate-300/70 mt-2">
+                {% if editing_promo %}
+                    Будет обновлена акция для выбранных товаров, скидки перетрут прежние.
+                {% else %}
+                    Будет создана акция для выбранных товаров (или выбранных фильтром), скидки перетрут прежние.
+                {% endif %}
+            </p>
+        </div>
+        
+        <!-- Предпросмотр -->
+        <div class="discount-preview" id="discount-preview">
+            <div class="discount-preview-title">⚡ Предпросмотр скидки</div>
+            <div class="discount-preview-content">
+                <div class="discount-preview-example">
+                    <span>Пример: товар за</span>
+                    <span class="price-old" id="preview-old">10 000 ₽</span>
+                    <span class="price-arrow">→</span>
+                    <span class="price-new" id="preview-new">8 000 ₽</span>
+                </div>
+                <div class="discount-preview-savings" id="preview-savings">Экономия: 2 000 ₽ (20%)</div>
+            </div>
+        </div>
+        
+        <!-- Скрытые поля формы -->
+        <input type="hidden" name="action" id="form-action" value="apply">
+        <input type="hidden" name="discount_percentage" id="form-percentage">
+        <input type="hidden" name="discount_price" id="form-fixed">
+        
+        <!-- Кнопки действий -->
+        <div class="discount-actions">
+            <button type="submit" class="btn btn-apply" id="btn-promo" onclick="prepareSubmit('{% if editing_promo %}update_promo{% else %}create_promo{% endif %}')">
+                <span>📣</span>
+                {% if editing_promo %}
+                    Обновить акцию
+                {% else %}
+                    Создать акцию для главной
+                {% endif %}
+            </button>
+                <button type="submit" class="btn btn-apply{% if editing_promo %} hidden{% endif %}" id="btn-apply" disabled onclick="prepareSubmit('apply')">
+                <span>✨</span> Применить скидку
+            </button>
+            <button type="submit" class="btn btn-clear{% if editing_promo %} hidden{% endif %}" id="btn-clear" disabled onclick="prepareSubmit('clear')">
+                <span>🗑️</span> Сбросить скидки
+            </button>
+            {% if editing_promo %}
+            <a href="{% url 'adminpanel:discount_list' %}" class="btn secondary">
+                <span>⬅️</span> Отмена
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Фильтры -->
+    <div class="filters-panel">
+        <div class="filters-row">
+            <div class="filter-group">
+                <label>Тип товара</label>
+                <div class="custom-select-wrapper">
+                    <select name="type" id="filter-type">
+                        <option value="all" {% if filters.product_type == 'all' %}selected{% endif %}>Все товары</option>
+                        <option value="perfume" {% if filters.product_type == 'perfume' %}selected{% endif %}>🧴 Парфюмы</option>
+                        <option value="pigment" {% if filters.product_type == 'pigment' %}selected{% endif %}>🎨 Пигменты</option>
+                    </select>
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>Бренд</label>
+                <div class="custom-select-wrapper">
+                    <select name="brand" id="filter-brand">
+                        <option value="">Все бренды</option>
+                        {% for b in brands %}
+                        <option value="{{ b.id }}" {% if filters.brand == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>Категория</label>
+                <div class="custom-select-wrapper">
+                    <select name="category" id="filter-category">
+                        <option value="">Все категории</option>
+                        {% for c in categories %}
+                        <option value="{{ c.id }}" {% if filters.category == c.id|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>Поиск</label>
+                <input type="text" id="filter-search" value="{{ filters.search|default_if_none:'' }}" 
+                       placeholder="Название или бренд..." autocomplete="off">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Быстрые действия -->
+    <div class="quick-actions">
+        <button type="button" class="quick-action-btn" onclick="selectAll()">
+            <span>✓</span> Выбрать все
+        </button>
+        <button type="button" class="quick-action-btn" onclick="clearSelection()">
+            <span>✕</span> Сбросить выбор
+        </button>
+        <button type="button" class="quick-action-btn" onclick="selectWithoutDiscount()">
+            <span>🏷️</span> Без скидки
+        </button>
+        <button type="button" class="quick-action-btn" onclick="selectWithDiscount()">
+            <span>💰</span> Со скидкой
+        </button>
+        <button type="button" class="quick-action-btn" onclick="selectAllPerfumes()">
+            <span>🧴</span> Все парфюмы
+        </button>
+        <button type="button" class="quick-action-btn" onclick="selectAllPigments()">
+            <span>🎨</span> Все пигменты
+        </button>
+    </div>
+    
+    <!-- Контейнер для товаров -->
+    <div id="products-container">
+        {% include "adminpanel/discounts/_products.html" %}
+    </div>
+    
+    <!-- Скрытые чекбоксы для формы -->
+    <div id="hidden-checkboxes" style="display: none;">
+        {% for item in perfumes %}
+        <input type="checkbox" name="items" value="perfume:{{ item.id }}" id="hidden-perfume-{{ item.id }}">
+        {% endfor %}
+        {% for item in pigments %}
+        <input type="checkbox" name="items" value="pigment:{{ item.id }}" id="hidden-pigment-{{ item.id }}">
+        {% endfor %}
+    </div>
+</form>
+
+<script>
+    let selectedItems = new Set();
+    let discountType = {% if editing_promo %}'promo'{% else %}'percentage'{% endif %};
+    const examplePrice = 10000;
+    
+    // Тип скидки
+    function setDiscountType(type) {
+        discountType = type;
+        
+        document.querySelectorAll('.discount-type-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.type === type);
+        });
+        
+        const showPercentage = type === 'percentage' || type === 'promo';
+        const showFixed = type === 'fixed';
+        document.getElementById('field-percentage').classList.toggle('hidden', !showPercentage);
+        document.getElementById('field-fixed').classList.toggle('hidden', !showFixed);
+        const preview = document.getElementById('discount-preview');
+        if (preview) {
+            if (type === 'promo') {
+                preview.style.display = 'none';
+            } else {
+                preview.style.display = 'block';
+            }
+        }
+
+        const promoBlock = document.getElementById('promo-block');
+        if (promoBlock) {
+            promoBlock.style.display = type === 'promo' ? 'block' : 'none';
+        }
+
+        // Переключаем доступные действия
+        const btnApply = document.getElementById('btn-apply');
+        const btnClear = document.getElementById('btn-clear');
+        const btnPromo = document.getElementById('btn-promo');
+        if (btnApply) btnApply.style.display = type === 'promo' ? 'none' : 'flex';
+        if (btnClear) btnClear.style.display = type === 'promo' ? 'none' : 'flex';
+        if (btnPromo) btnPromo.style.display = type === 'promo' ? 'flex' : 'none';
+
+        updatePreview();
+    }
+    
+    // Предпросмотр
+    function updatePreview() {
+        const preview = document.getElementById('discount-preview');
+        const previewOld = document.getElementById('preview-old');
+        const previewNew = document.getElementById('preview-new');
+        const previewSavings = document.getElementById('preview-savings');
+        
+        let newPrice = examplePrice;
+        let savings = 0;
+        let savingsPercent = 0;
+        
+        if (discountType === 'percentage') {
+            const percent = parseInt(document.getElementById('input-percentage').value) || 0;
+            if (percent > 0) {
+                newPrice = examplePrice * (1 - percent / 100);
+                savings = examplePrice - newPrice;
+                savingsPercent = percent;
+                preview.classList.add('visible');
+            } else {
+                preview.classList.remove('visible');
+                return;
+            }
+        } else {
+            const fixed = parseFloat(document.getElementById('input-fixed').value) || 0;
+            if (fixed > 0) {
+                newPrice = fixed;
+                savings = examplePrice - newPrice;
+                savingsPercent = Math.round((savings / examplePrice) * 100);
+                preview.classList.add('visible');
+            } else {
+                preview.classList.remove('visible');
+                return;
+            }
+        }
+        
+        previewOld.textContent = formatPrice(examplePrice);
+        previewNew.textContent = formatPrice(newPrice);
+        previewSavings.textContent = `Экономия: ${formatPrice(savings)} (${savingsPercent}%)`;
+    }
+    
+    function formatPrice(price) {
+        return new Intl.NumberFormat('ru-RU').format(Math.round(price)) + ' ₽';
+    }
+    
+    // Подготовка формы перед отправкой
+    function prepareSubmit(action) {
+        document.getElementById('form-action').value = action;
+
+        const percVal = document.getElementById('input-percentage').value || 0;
+        const fixedVal = document.getElementById('input-fixed').value || '';
+
+        // Для promo и редактирования промо используем процентный сценарий по умолчанию
+        const isPromo = {% if editing_promo %}true{% else %}false{% endif %} || discountType === 'promo';
+        const mode = isPromo ? 'percentage' : (discountType || 'percentage');
+
+        if (mode === 'percentage') {
+            document.getElementById('form-percentage').value = percVal;
+            document.getElementById('form-fixed').value = '';
+        } else {
+            document.getElementById('form-percentage').value = 0;
+            document.getElementById('form-fixed').value = fixedVal;
+        }
+
+        // Синхронизация скрытых полей промо
+        const promoPerc = document.getElementById('promo_discount_percentage');
+        const promoPrice = document.getElementById('promo_discount_price');
+        const promoStart = document.getElementById('promo_start');
+        const promoEnd = document.getElementById('promo_end');
+        const startVal = document.getElementById('input-start').value || '';
+        const endVal = document.getElementById('input-end').value || '';
+        if (promoPerc) promoPerc.value = discountType === 'percentage' ? percVal : 0;
+        if (promoPrice) promoPrice.value = discountType === 'fixed' ? fixedVal : '';
+        if (promoStart) promoStart.value = startVal;
+        if (promoEnd) promoEnd.value = endVal;
+    }
+    
+    // Выбор товаров
+    window.toggleCard = function(card) {
+        const itemValue = card.dataset.value;
+        const isSelected = card.classList.contains('selected');
+
+        console.log('toggleCard called for:', itemValue, 'currently selected:', isSelected);
+
+        if (isSelected) {
+            // Всегда можно снять выбор
+            selectedItems.delete(itemValue);
+            card.classList.remove('selected');
+            console.log('Removed selection for:', itemValue);
+        } else {
+            // Проверяем ограничение в режиме промо
+            if (discountType === 'promo' && selectedItems.size >= 6) {
+                console.log('Cannot select more than 6 items in promo mode');
+                return; // Не даем выбрать больше 6 товаров
+            }
+
+            selectedItems.add(itemValue);
+            card.classList.add('selected');
+            console.log('Added selection for:', itemValue);
+        }
+
+        updateHiddenCheckbox(card.dataset.type, card.dataset.id, !isSelected);
+        updateUI();
+    }
+    
+    window.updateHiddenCheckbox = function(type, id, checked) {
+        const checkbox = document.getElementById(`hidden-${type}-${id}`);
+        if (checkbox) checkbox.checked = checked;
+    }
+
+    function updateHiddenCheckboxes() {
+        // Очищаем старые checkbox'ы
+        const hiddenContainer = document.getElementById('hidden-checkboxes');
+        hiddenContainer.innerHTML = '';
+
+        // Создаем новые checkbox'ы для всех видимых карточек
+        document.querySelectorAll('.product-card-improved').forEach(card => {
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'items';
+            checkbox.value = card.dataset.value;
+            checkbox.id = `hidden-${card.dataset.type}-${card.dataset.id}`;
+
+            // Проверяем, выбран ли этот товар
+            if (selectedItems.has(card.dataset.value)) {
+                checkbox.checked = true;
+            }
+
+            hiddenContainer.appendChild(checkbox);
+        });
+    }
+    
+    function updateUI() {
+        const count = selectedItems.size;
+        const badge = document.getElementById('selection-badge');
+
+        if (discountType === 'promo') {
+            document.getElementById('selected-count').textContent = `${count}/6`;
+            badge.classList.toggle('has-selection', count > 0);
+            badge.classList.toggle('limit-reached', count >= 6);
+        } else {
+            document.getElementById('selected-count').textContent = count;
+            badge.classList.toggle('has-selection', count > 0);
+            badge.classList.remove('limit-reached');
+        }
+
+        const btnApply = document.getElementById('btn-apply');
+        const btnClear = document.getElementById('btn-clear');
+        if (btnApply) btnApply.disabled = count === 0;
+        if (btnClear) btnClear.disabled = count === 0;
+    }
+    
+    // Быстрый выбор
+    function selectAll() {
+        if (discountType === 'promo') {
+            // В режиме промо выбираем максимум 6 товаров
+            const cards = Array.from(document.querySelectorAll('.product-card-improved:not(.selected)'));
+            const cardsToSelect = cards.slice(0, 6 - selectedItems.size);
+
+            cardsToSelect.forEach(card => {
+                selectedItems.add(card.dataset.value);
+                card.classList.add('selected');
+                updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+            });
+        } else {
+            document.querySelectorAll('.product-card-improved').forEach(card => {
+                selectedItems.add(card.dataset.value);
+                card.classList.add('selected');
+                updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+            });
+        }
+        updateUI();
+    }
+    
+    function clearSelection() {
+        selectedItems.clear();
+        document.querySelectorAll('.product-card-improved.selected').forEach(card => {
+            card.classList.remove('selected');
+        });
+        document.querySelectorAll('#hidden-checkboxes input').forEach(cb => cb.checked = false);
+        updateUI();
+    }
+    
+    function selectWithoutDiscount() {
+        clearSelection();
+        let cards = document.querySelectorAll('.product-card-improved:not(.has-discount)');
+
+        if (discountType === 'promo') {
+            // В режиме промо ограничиваем до 6 товаров
+            cards = Array.from(cards).slice(0, 6);
+        }
+
+        cards.forEach(card => {
+            selectedItems.add(card.dataset.value);
+            card.classList.add('selected');
+            updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+        });
+        updateUI();
+    }
+    
+    function selectWithDiscount() {
+        clearSelection();
+        let cards = document.querySelectorAll('.product-card-improved.has-discount');
+
+        if (discountType === 'promo') {
+            // В режиме промо ограничиваем до 6 товаров
+            cards = Array.from(cards).slice(0, 6);
+        }
+
+        cards.forEach(card => {
+            selectedItems.add(card.dataset.value);
+            card.classList.add('selected');
+            updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+        });
+        updateUI();
+    }
+    
+    function selectAllPerfumes() {
+        let cards = document.querySelectorAll('.product-card-improved[data-type="perfume"]');
+
+        if (discountType === 'promo') {
+            // В режиме промо ограничиваем до 6 товаров
+            const remainingSlots = 6 - selectedItems.size;
+            cards = Array.from(cards).slice(0, remainingSlots);
+        }
+
+        cards.forEach(card => {
+            selectedItems.add(card.dataset.value);
+            card.classList.add('selected');
+            updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+        });
+        updateUI();
+    }
+    
+    function selectAllPigments() {
+        let cards = document.querySelectorAll('.product-card-improved[data-type="pigment"]');
+
+        if (discountType === 'promo') {
+            // В режиме промо ограничиваем до 6 товаров
+            const remainingSlots = 6 - selectedItems.size;
+            cards = Array.from(cards).slice(0, remainingSlots);
+        }
+
+        cards.forEach(card => {
+            selectedItems.add(card.dataset.value);
+            card.classList.add('selected');
+            updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+        });
+        updateUI();
+    }
+    
+    function toggleSection(type) {
+        const checkbox = document.getElementById(`toggle-${type}`);
+        const isChecked = checkbox.checked;
+
+        let cards = document.querySelectorAll(`.product-card-improved[data-type="${type}"]`);
+
+        if (discountType === 'promo' && isChecked) {
+            // В режиме промо ограничиваем до 6 товаров
+            const remainingSlots = 6 - selectedItems.size;
+            cards = Array.from(cards).slice(0, remainingSlots);
+        }
+
+        cards.forEach(card => {
+            if (isChecked) {
+                selectedItems.add(card.dataset.value);
+                card.classList.add('selected');
+            } else {
+                selectedItems.delete(card.dataset.value);
+                card.classList.remove('selected');
+            }
+            updateHiddenCheckbox(card.dataset.type, card.dataset.id, isChecked);
+        });
+        updateUI();
+    }
+    
+    // AJAX фильтрация
+    let filterTimeout;
+    const filterInputs = ['filter-type', 'filter-brand', 'filter-category', 'filter-search'];
+    
+    filterInputs.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.addEventListener('input', debounceFilter);
+            element.addEventListener('change', debounceFilter);
+        }
+    });
+    
+    function debounceFilter() {
+        clearTimeout(filterTimeout);
+        filterTimeout = setTimeout(applyFilters, 400);
+    }
+    
+    function applyFilters() {
+        const params = new URLSearchParams();
+
+        // Сохраняем параметр promo если он есть в URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const promoId = urlParams.get('promo');
+        if (promoId) {
+            params.append('promo', promoId);
+        }
+
+        const type = document.getElementById('filter-type').value;
+        const brand = document.getElementById('filter-brand').value;
+        const category = document.getElementById('filter-category').value;
+        const search = document.getElementById('filter-search').value.trim();
+
+        if (type && type !== 'all') params.append('type', type);
+        if (brand) params.append('brand', brand);
+        if (category) params.append('category', category);
+        if (search) params.append('search', search);
+
+        const url = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+        
+        const productsContainer = document.getElementById('products-container');
+        productsContainer.innerHTML = `
+            <div class="products-loader">
+                <div class="loader-spinner"></div>
+                <p>Загрузка товаров...</p>
+            </div>
+        `;
+        
+        fetch(url, {
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            }
+        })
+        .then(response => response.text())
+        .then(html => {
+            productsContainer.innerHTML = html;
+            window.history.replaceState({}, '', url);
+
+            // Обновляем hidden checkbox'ы на основе новых данных
+            updateHiddenCheckboxes();
+
+            // Переподключаем обработчики
+            const currentSelection = Array.from(selectedItems);
+
+            document.querySelectorAll('.product-card-improved').forEach(card => {
+                // Удаляем старые обработчики, чтобы избежать дублирования
+                card.removeEventListener('click', window.toggleCard);
+                card.addEventListener('click', () => window.toggleCard(card));
+
+                // Восстанавливаем предыдущий выбор
+                if (currentSelection.includes(card.dataset.value)) {
+                    card.classList.add('selected');
+                    updateHiddenCheckbox(card.dataset.type, card.dataset.id, true);
+                }
+            });
+
+            // Обновляем hidden checkboxes после AJAX
+            updateHiddenCheckboxes();
+            updateUI();
+
+            updateUI();
+        })
+        .catch(error => {
+            console.error('Ошибка фильтрации:', error);
+            productsContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">⚠️</div>
+                    <div class="empty-state-title">Ошибка загрузки</div>
+                    <p>Попробуйте обновить страницу</p>
+                </div>
+            `;
+        });
+    }
+    
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('Initializing product cards...');
+        console.log('Initial discount type:', discountType);
+
+        // Устанавливаем тип скидки и обновляем интерфейс
+        setDiscountType(discountType);
+
+        document.querySelectorAll('.product-card-improved').forEach(card => {
+            card.addEventListener('click', (e) => {
+                console.log('Card clicked:', card.dataset.value);
+                window.toggleCard(card);
+            });
+            console.log('Added click handler for:', card.dataset.value);
+        });
+        console.log('Total cards found:', document.querySelectorAll('.product-card-improved').length);
+
+        // Синхронизируем hidden checkbox'ы с текущим выбором
+        updateHiddenCheckboxes();
+        updateUI();
+
+        // Предварительное заполнение формы для редактирования промо
+        {% if editing_promo %}
+        console.log('Editing promo mode activated');
+
+        // Автоматически выбираем товары промо-акции
+        console.log('Selecting promo items:', [{% for item in selected_promo_items %}'{{ item }}',{% endfor %}]);
+        // Автоматически выбираем товары промо-акции
+        const promoItemsToSelect = [{% for item in selected_promo_items %}'{{ item }}',{% endfor %}];
+        console.log('Promo items to select:', promoItemsToSelect);
+
+        function selectPromoItems() {
+            promoItemsToSelect.forEach(itemValue => {
+                const promoCard = document.querySelector(`.product-card-improved[data-value="${itemValue}"]`);
+                if (promoCard && !promoCard.classList.contains('selected')) {
+                    selectedItems.add(itemValue);
+                    promoCard.classList.add('selected');
+                    updateHiddenCheckbox(promoCard.dataset.type, promoCard.dataset.id, true);
+                    console.log('Auto-selected promo item:', itemValue);
+                }
+            });
+            updateUI();
+        }
+
+        // Выбираем товары сразу и через небольшую задержку (на случай AJAX загрузки)
+        selectPromoItems();
+        setTimeout(selectPromoItems, 500);
+        {% endif %}
+    });
+</script>
+{% endblock %}
+

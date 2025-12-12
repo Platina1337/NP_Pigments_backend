@@ -1,0 +1,163 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Админка{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'adminpanel.css' %}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <!-- Mobile menu toggle -->
+    <button class="mobile-menu-toggle" onclick="toggleSidebar()" aria-label="Открыть меню">
+        ☰
+    </button>
+    
+    <!-- Sidebar overlay -->
+    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+    
+    <div class="sidebar">
+        <h2>Admin</h2>
+        <div class="nav">
+            <a href="{% url 'adminpanel:dashboard' %}">📊 Дашборд</a>
+            <a href="{% url 'adminpanel:brand_list' %}">🏷️ Бренды</a>
+            <a href="{% url 'adminpanel:category_list' %}">📁 Категории</a>
+            <a href="{% url 'adminpanel:perfume_list' %}">🧴 Парфюмы</a>
+            <a href="{% url 'adminpanel:pigment_list' %}">🎨 Пигменты</a>
+            <a href="{% url 'adminpanel:trending_manage' %}">🔥 В тренде сейчас</a>
+            <a href="{% url 'adminpanel:discount_list' %}">🏷️ Акции</a>
+            <a href="{% url 'adminpanel:order_list' %}">📦 Заказы</a>
+            <a href="{% url 'adminpanel:user_list' %}">👥 Пользователи</a>
+            <a href="/admin/">⚙️ Django Admin</a>
+        </div>
+    </div>
+    <main class="content">
+        <div class="topbar">
+            <div>
+                <h1 style="margin:0; font-size:22px;">{% block page_title %}{% endblock %}</h1>
+                <div style="color:rgba(229,231,235,0.6); font-size:14px;">{% block page_subtitle %}{% endblock %}</div>
+            </div>
+            <div style="font-size: 14px; color: var(--muted);">{{ request.user.email }}</div>
+        </div>
+
+        <div class="messages">
+            {% for message in messages %}
+                <div class="message {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+
+        {% block content %}{% endblock %}
+    </main>
+    
+    <script>
+        function toggleSidebar() {
+            document.querySelector('.sidebar').classList.toggle('open');
+            document.querySelector('.sidebar-overlay').classList.toggle('active');
+        }
+        
+        function closeSidebar() {
+            document.querySelector('.sidebar').classList.remove('open');
+            document.querySelector('.sidebar-overlay').classList.remove('active');
+        }
+
+        (function () {
+            const debounce = (fn, delay = 300) => {
+                let timer;
+                return (...args) => {
+                    clearTimeout(timer);
+                    timer = setTimeout(() => fn(...args), delay);
+                };
+            };
+
+            function buildParams(form) {
+                const params = new URLSearchParams();
+                Array.from(form.elements).forEach((el) => {
+                    if (!el.name || el.disabled) return;
+                    const type = (el.type || "").toLowerCase();
+                    if (type === "checkbox") {
+                        if (el.checked) params.append(el.name, el.value || "1");
+                        return;
+                    }
+                    if (type === "radio") {
+                        if (el.checked) params.append(el.name, el.value);
+                        return;
+                    }
+                    if (el.tagName === "BUTTON") return;
+                    if (el.value !== "") params.append(el.name, el.value);
+                });
+                return params;
+            }
+
+            function bindAsyncPagination(target, applyFn) {
+                target.querySelectorAll("a[data-async-page]").forEach((link) => {
+                    link.addEventListener("click", (event) => {
+                        event.preventDefault();
+                        applyFn(link.href);
+                    });
+                });
+            }
+
+            function applyAsync(form, target, url) {
+                const params = url ? new URL(url, window.location.origin).searchParams : buildParams(form);
+                const baseUrl = url ? new URL(url, window.location.origin) : new URL(window.location.href);
+                const queryString = params.toString();
+                const fetchUrl = baseUrl.pathname + (queryString ? "?" + queryString : "");
+
+                target.setAttribute("aria-busy", "true");
+
+                fetch(fetchUrl, {
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest",
+                        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    },
+                })
+                    .then((response) => {
+                        if (!response.ok) throw new Error("Network error");
+                        return response.text();
+                    })
+                    .then((html) => {
+                        target.innerHTML = html;
+                        window.history.replaceState({}, "", fetchUrl);
+                        bindAsyncPagination(target, (href) => applyAsync(form, target, href));
+                        initAsyncForms(target);
+                    })
+                    .catch((error) => console.error("Async filter error:", error))
+                    .finally(() => target.removeAttribute("aria-busy"));
+            }
+
+            function setupAsyncForm(form) {
+                if (form.dataset.asyncBound === "1") return;
+                const targetSelector = form.dataset.target;
+                if (!targetSelector) return;
+                const target = document.querySelector(targetSelector);
+                if (!target) return;
+
+                const apply = (href) => applyAsync(form, target, href);
+                bindAsyncPagination(target, apply);
+
+                form.addEventListener("submit", (event) => {
+                    event.preventDefault();
+                    apply();
+                });
+
+                const debounced = debounce(() => apply(), 350);
+                form.querySelectorAll("input, select").forEach((input) => {
+                    const eventName = input.type === "checkbox" || input.tagName === "SELECT" ? "change" : "input";
+                    input.addEventListener(eventName, debounced);
+                });
+
+                form.dataset.asyncBound = "1";
+            }
+
+            function initAsyncForms(scope) {
+                const root = scope || document;
+                root.querySelectorAll("form.js-async-filter").forEach(setupAsyncForm);
+            }
+
+            document.addEventListener("DOMContentLoaded", () => initAsyncForms(document));
+        })();
+    </script>
+</body>
+</html>
+

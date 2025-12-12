@@ -15,3 +15,4 @@ yookassa==3.4.1
 
 # Службы доставки
 # russianpost - используем собственную реализацию через requests
+whitenoise==6.7.0

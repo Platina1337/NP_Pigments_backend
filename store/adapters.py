@@ -10,7 +10,8 @@ class CustomAccountAdapter(DefaultAccountAdapter):
         """
         Проверяет, разрешена ли регистрация новых пользователей
         """
-        return True
+        # В админ-панели регистрации быть не должно
+        return False
 
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
@@ -20,18 +21,20 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         """
         Проверяет, разрешена ли регистрация через социальные сети
         """
-        return True
+        # Запрещаем социальную регистрацию
+        return False
 
     def populate_user(self, request, sociallogin, data):
         """
         Заполняет данные пользователя из социальной сети
+        ВАЖНО: Данные профиля (first_name, last_name) НЕ сохраняются в User,
+        они будут сохранены в UserProfile через сигнал или отдельную логику
         """
         user = super().populate_user(request, sociallogin, data)
 
-        # Устанавливаем имя пользователя из Google данных
+        # Устанавливаем только username из Google данных (данные для входа)
         if sociallogin.account.provider == 'google':
-            user.first_name = data.get('given_name', '')
-            user.last_name = data.get('family_name', '')
             user.username = data.get('email', '').split('@')[0]
+            # НЕ сохраняем first_name и last_name в User - они хранятся только в UserProfile
 
         return user

@@ -5,11 +5,27 @@ from django.utils.html import format_html
 from .models import (
     Brand, Category, Perfume, Pigment,
     UserProfile, UserSettings, Cart, CartItem,
-    Order, OrderItem, EmailOTP, ProductImage
+    Order, OrderItem, EmailOTP, ProductImage,
+    VolumeOption, WeightOption
 )
 
 
-# Inline админки
+# Inline админки для вариантов объема/веса
+class VolumeOptionInline(admin.TabularInline):
+    model = VolumeOption
+    extra = 1
+    fields = ('volume_ml', 'price', 'discount_percentage', 'discount_price', 'stock_quantity', 'in_stock', 'is_default')
+    ordering = ['volume_ml']
+
+
+class WeightOptionInline(admin.TabularInline):
+    model = WeightOption
+    extra = 1
+    fields = ('weight_gr', 'price', 'discount_percentage', 'discount_price', 'stock_quantity', 'in_stock', 'is_default')
+    ordering = ['weight_gr']
+
+
+# Inline админки для изображений
 class ProductImageInline(admin.TabularInline):
     model = ProductImage
     extra = 1  # Количество пустых форм для загрузки
@@ -158,7 +174,7 @@ class PerfumeAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-    inlines = [PerfumeImageInline]
+    inlines = [VolumeOptionInline, PerfumeImageInline]
     
     def image_preview(self, obj):
         if obj.image:
@@ -215,7 +231,7 @@ class PigmentAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-    inlines = [PigmentImageInline]
+    inlines = [WeightOptionInline, PigmentImageInline]
     
     def image_preview(self, obj):
         if obj.image:

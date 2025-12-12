@@ -12,6 +12,7 @@ router.register(r'products', views.ProductViewSet, basename='product')
 router.register(r'cart-items', views.CartItemViewSet)
 router.register(r'orders', views.OrderViewSet)
 router.register(r'wishlist-items', views.WishlistItemViewSet, basename='wishlist-item')
+router.register(r'promotions', views.PromotionViewSet, basename='promotion')
 
 urlpatterns = [
     path('api/', include(router.urls)),
@@ -33,9 +34,14 @@ urlpatterns = [
     path('api/theme/', views.theme_settings, name='theme-settings'),
     path('api/theme/public/', views.public_theme_settings, name='public-theme-settings'),
 
+    # Лояльность
+    path('api/loyalty/account/', views.LoyaltyAccountView.as_view(), name='loyalty-account'),
+    path('api/loyalty/transactions/', views.LoyaltyTransactionListView.as_view(), name='loyalty-transactions'),
+
     # Email OTP
     path('api/auth/otp/send/', views.EmailOTPSendView.as_view(), name='email-otp-send'),
     path('api/auth/otp/verify/', views.EmailOTPVerifyView.as_view(), name='email-otp-verify'),
+    path('api/auth/magic-link/verify/', views.MagicLinkVerifyView.as_view(), name='magic-link-verify'),
 
     # Google OAuth
     path('api/auth/google/login/', views.google_oauth_login, name='google-oauth-login'),
@@ -57,4 +63,10 @@ urlpatterns = [
     
     # Cart sync
     path('api/cart/sync/', views.sync_cart, name='sync-cart'),
+
+    # Product price sync
+    path('api/sync/prices/', views.sync_product_prices, name='sync-product-prices'),
+
+    # Trending
+    path('api/trending/', views.TrendingListView.as_view(), name='trending-list'),
 ]

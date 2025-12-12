@@ -1,0 +1,20 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Заказы{% endblock %}
+{% block content %}
+<div class="card">
+    <form class="js-async-filter" data-target="#orders-list" method="get" style="margin-bottom:12px; display:flex; gap:8px; align-items:center;">
+        <div class="custom-select-wrapper">
+            <select name="status">
+                <option value="">Все статусы</option>
+                {% for st, label in orders.model.STATUS_CHOICES %}
+                    <option value="{{ st }}" {% if status_filter == st %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+    <div id="orders-list">
+        {% include "adminpanel/orders/_list.html" %}
+    </div>
+</div>
+{% endblock %}
+

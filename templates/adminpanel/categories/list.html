@@ -1,0 +1,21 @@
+{% extends "adminpanel/base.html" %}
+{% block page_title %}Категории{% endblock %}
+{% block content %}
+<div class="topbar">
+    <form class="js-async-filter" data-target="#categories-list" method="get" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input name="q" placeholder="Поиск по названию" value="{{ search|default:'' }}">
+        <div class="custom-select-wrapper" style="min-width:160px;">
+            <select name="type">
+                <option value="">Все типы</option>
+                <option value="perfume" {% if ctype == 'perfume' %}selected{% endif %}>Парфюмерия</option>
+                <option value="pigment" {% if ctype == 'pigment' %}selected{% endif %}>Пигменты</option>
+            </select>
+        </div>
+    </form>
+    <a class="btn" href="{% url 'adminpanel:category_create' %}">Добавить категорию</a>
+</div>
+<div id="categories-list">
+    {% include "adminpanel/categories/_list.html" %}
+</div>
+{% endblock %}
+

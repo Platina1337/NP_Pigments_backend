@@ -2,11 +2,18 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+import logging
+from decimal import Decimal, ROUND_DOWN
+from django.db import transaction
+
+logger = logging.getLogger(__name__)
 from .models import (
     Brand,
     Category,
     Perfume,
     Pigment,
+    Promotion,
+    TrendingProduct,
     UserProfile,
     UserSettings,
     Cart,
@@ -17,6 +24,10 @@ from .models import (
     ProductImage,
     Wishlist,
     WishlistItem,
+    LoyaltyAccount,
+    LoyaltyTransaction,
+    VolumeOption,
+    WeightOption,
 )
 
 def serialize_product_payload(product):
@@ -28,7 +39,10 @@ def serialize_product_payload(product):
         'id': product.id,
         'name': product.name,
         'description': product.description,
-        'price': str(product.price),
+        'price': float(product.price),
+        'final_price': float(product.get_discounted_price()) if hasattr(product, 'get_discounted_price') else float(product.price),
+        'is_on_sale': product.is_on_sale() if hasattr(product, 'is_on_sale') else False,
+        'discount_percent_display': product.get_discount_percentage_display() if hasattr(product, 'get_discount_percentage_display') else 0,
         'image': product.image.url if getattr(product, 'image', None) else None,
         'in_stock': product.in_stock,
         'stock_quantity': product.stock_quantity,
@@ -59,6 +73,9 @@ def serialize_product_payload(product):
             'top_notes': product.top_notes,
             'heart_notes': product.heart_notes,
             'base_notes': product.base_notes,
+            'min_price': float(product.min_price),
+            'max_price': float(product.max_price),
+            'has_multiple_volumes': product.has_multiple_volumes,
         })
     else:
         base.update({
@@ -72,6 +89,9 @@ def serialize_product_payload(product):
             'top_notes': '',
             'heart_notes': '',
             'base_notes': '',
+            'min_price': float(product.min_price),
+            'max_price': float(product.max_price),
+            'has_multiple_weights': product.has_multiple_weights,
         })
 
     return base
@@ -81,6 +101,47 @@ class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
         fields = ['id', 'image', 'alt_text']
+
+
+class VolumeOptionSerializer(serializers.ModelSerializer):
+    """Сериализатор для вариантов объема парфюма"""
+    final_price = serializers.SerializerMethodField()
+    is_on_sale = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VolumeOption
+        fields = [
+            'id', 'volume_ml', 'price', 'final_price',
+            'discount_percentage', 'discount_price',
+            'stock_quantity', 'in_stock', 'is_default', 'is_on_sale'
+        ]
+
+    def get_final_price(self, obj):
+        return float(obj.get_discounted_price())
+
+    def get_is_on_sale(self, obj):
+        return obj.is_on_sale()
+
+
+class WeightOptionSerializer(serializers.ModelSerializer):
+    """Сериализатор для вариантов веса пигмента"""
+    final_price = serializers.SerializerMethodField()
+    is_on_sale = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WeightOption
+        fields = [
+            'id', 'weight_gr', 'price', 'final_price',
+            'discount_percentage', 'discount_price',
+            'stock_quantity', 'in_stock', 'is_default', 'is_on_sale'
+        ]
+
+    def get_final_price(self, obj):
+        return float(obj.get_discounted_price())
+
+    def get_is_on_sale(self, obj):
+        return obj.is_on_sale()
+
 
 class BrandSerializer(serializers.ModelSerializer):
     """Сериализатор для бренда"""
@@ -99,61 +160,179 @@ class PerfumeSerializer(serializers.ModelSerializer):
     brand = BrandSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
+    volume_options = VolumeOptionSerializer(many=True, read_only=True)
     brand_id = serializers.IntegerField(write_only=True)
     category_id = serializers.IntegerField(write_only=True)
+    final_price = serializers.SerializerMethodField()
+    is_on_sale = serializers.SerializerMethodField()
+    discount_percent_display = serializers.SerializerMethodField()
+    min_price = serializers.SerializerMethodField()
+    max_price = serializers.SerializerMethodField()
+    has_multiple_volumes = serializers.SerializerMethodField()
 
     class Meta:
         model = Perfume
         fields = [
             'id', 'name', 'brand', 'category', 'brand_id', 'category_id',
-            'description', 'gender', 'price', 'volume_ml', 'concentration',
+            'slug', 'sku',
+            'description', 'gender', 'price', 'discount_percentage', 'discount_price',
+            'discount_start_date', 'discount_end_date', 'final_price', 'is_on_sale',
+            'discount_percent_display', 'volume_ml', 'concentration',
             'top_notes', 'heart_notes', 'base_notes', 'image', 'images', 'in_stock',
-            'stock_quantity', 'featured', 'created_at', 'updated_at'
+            'stock_quantity', 'featured', 'created_at', 'updated_at',
+            'volume_options', 'min_price', 'max_price', 'has_multiple_volumes'
         ]
         read_only_fields = ['created_at', 'updated_at']
 
+    def get_final_price(self, obj):
+        return float(obj.get_discounted_price())
+
+    def get_is_on_sale(self, obj):
+        return obj.is_on_sale()
+
+    def get_discount_percent_display(self, obj):
+        return obj.get_discount_percentage_display()
+
+    def get_min_price(self, obj):
+        return float(obj.min_price)
+
+    def get_max_price(self, obj):
+        return float(obj.max_price)
+
+    def get_has_multiple_volumes(self, obj):
+        return obj.has_multiple_volumes
+
 class PerfumeListSerializer(serializers.ModelSerializer):
     """Сериализатор для списка парфюмов (упрощенный)"""
+    brand = BrandSerializer(read_only=True)
+    category = CategorySerializer(read_only=True)
     brand_name = serializers.CharField(source='brand.name', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    final_price = serializers.SerializerMethodField()
+    is_on_sale = serializers.SerializerMethodField()
+    discount_percent_display = serializers.SerializerMethodField()
+    min_price = serializers.SerializerMethodField()
+    max_price = serializers.SerializerMethodField()
+    has_multiple_volumes = serializers.SerializerMethodField()
 
     class Meta:
         model = Perfume
         fields = [
-            'id', 'name', 'brand_name', 'category_name', 'price',
-            'volume_ml', 'gender', 'in_stock', 'image', 'featured'
+            'id', 'name', 'brand', 'category', 'brand_name', 'category_name', 'price',
+            'slug', 'sku',
+            'discount_percentage', 'discount_price', 'discount_start_date', 'discount_end_date',
+            'final_price', 'is_on_sale', 'discount_percent_display',
+            'volume_ml', 'gender', 'in_stock', 'image', 'featured', 'stock_quantity', 'created_at',
+            'min_price', 'max_price', 'has_multiple_volumes'
         ]
+
+    def get_final_price(self, obj):
+        return float(obj.get_discounted_price())
+
+    def get_is_on_sale(self, obj):
+        return obj.is_on_sale()
+
+    def get_discount_percent_display(self, obj):
+        return obj.get_discount_percentage_display()
+
+    def get_min_price(self, obj):
+        return float(obj.min_price)
+
+    def get_max_price(self, obj):
+        return float(obj.max_price)
+
+    def get_has_multiple_volumes(self, obj):
+        return obj.has_multiple_volumes
 
 class PigmentSerializer(serializers.ModelSerializer):
     """Сериализатор для пигмента"""
     brand = BrandSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
+    weight_options = WeightOptionSerializer(many=True, read_only=True)
     brand_id = serializers.IntegerField(write_only=True)
     category_id = serializers.IntegerField(write_only=True)
+    final_price = serializers.SerializerMethodField()
+    is_on_sale = serializers.SerializerMethodField()
+    discount_percent_display = serializers.SerializerMethodField()
+    min_price = serializers.SerializerMethodField()
+    max_price = serializers.SerializerMethodField()
+    has_multiple_weights = serializers.SerializerMethodField()
 
     class Meta:
         model = Pigment
         fields = [
             'id', 'name', 'brand', 'category', 'brand_id', 'category_id',
+            'slug', 'sku',
             'description', 'color_code', 'color_type', 'application_type',
-            'price', 'weight_gr', 'image', 'images', 'in_stock', 'stock_quantity',
-            'featured', 'created_at', 'updated_at'
+            'price', 'discount_percentage', 'discount_price', 'discount_start_date', 'discount_end_date',
+            'final_price', 'is_on_sale', 'discount_percent_display',
+            'weight_gr', 'image', 'images', 'in_stock', 'stock_quantity',
+            'featured', 'created_at', 'updated_at',
+            'weight_options', 'min_price', 'max_price', 'has_multiple_weights'
         ]
         read_only_fields = ['created_at', 'updated_at']
 
+    def get_final_price(self, obj):
+        return float(obj.get_discounted_price())
+
+    def get_is_on_sale(self, obj):
+        return obj.is_on_sale()
+
+    def get_discount_percent_display(self, obj):
+        return obj.get_discount_percentage_display()
+
+    def get_min_price(self, obj):
+        return float(obj.min_price)
+
+    def get_max_price(self, obj):
+        return float(obj.max_price)
+
+    def get_has_multiple_weights(self, obj):
+        return obj.has_multiple_weights
+
 class PigmentListSerializer(serializers.ModelSerializer):
     """Сериализатор для списка пигментов (упрощенный)"""
+    brand = BrandSerializer(read_only=True)
+    category = CategorySerializer(read_only=True)
     brand_name = serializers.CharField(source='brand.name', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    final_price = serializers.SerializerMethodField()
+    is_on_sale = serializers.SerializerMethodField()
+    discount_percent_display = serializers.SerializerMethodField()
+    min_price = serializers.SerializerMethodField()
+    max_price = serializers.SerializerMethodField()
+    has_multiple_weights = serializers.SerializerMethodField()
 
     class Meta:
         model = Pigment
         fields = [
-            'id', 'name', 'brand_name', 'category_name', 'price',
+            'id', 'name', 'brand', 'category', 'brand_name', 'category_name', 'price',
+            'slug', 'sku',
+            'discount_percentage', 'discount_price', 'discount_start_date', 'discount_end_date',
+            'final_price', 'is_on_sale', 'discount_percent_display',
             'weight_gr', 'color_type', 'application_type', 'in_stock',
-            'image', 'featured'
+            'image', 'featured', 'stock_quantity', 'created_at',
+            'min_price', 'max_price', 'has_multiple_weights'
         ]
+
+    def get_final_price(self, obj):
+        return float(obj.get_discounted_price())
+
+    def get_is_on_sale(self, obj):
+        return obj.is_on_sale()
+
+    def get_discount_percent_display(self, obj):
+        return obj.get_discount_percentage_display()
+
+    def get_min_price(self, obj):
+        return float(obj.min_price)
+
+    def get_max_price(self, obj):
+        return float(obj.max_price)
+
+    def get_has_multiple_weights(self, obj):
+        return obj.has_multiple_weights
 
 # Пользовательские сериализаторы
 
@@ -176,9 +355,15 @@ class UserSettingsSerializer(serializers.ModelSerializer):
 
 class EmailOTPSerializer(serializers.ModelSerializer):
     """Сериализатор для Email OTP"""
+    # Дополнительные поля для регистрации (не сохраняются в модель, но используются)
+    username = serializers.CharField(required=False, allow_blank=True)
+    password = serializers.CharField(required=False, allow_blank=True)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    
     class Meta:
         model = EmailOTP
-        fields = ['email', 'purpose']
+        fields = ['email', 'purpose', 'username', 'password', 'first_name', 'last_name']
         read_only_fields = ['otp_code', 'expires_at', 'is_used']
 
 class EmailOTPVerifySerializer(serializers.Serializer):
@@ -186,6 +371,12 @@ class EmailOTPVerifySerializer(serializers.Serializer):
     email = serializers.EmailField()
     otp_code = serializers.CharField(max_length=6)
     purpose = serializers.ChoiceField(choices=[('login', 'Вход'), ('register', 'Регистрация')])
+
+    # Дополнительные поля для регистрации
+    username = serializers.CharField(required=False, allow_blank=True)
+    password = serializers.CharField(required=False, allow_blank=True, validators=[validate_password])
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     """Сериализатор для регистрации пользователя"""
@@ -224,39 +415,76 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """Сериализатор для пользователя"""
-    profile = UserProfileSerializer()
-    settings = UserSettingsSerializer()
+    profile = UserProfileSerializer(required=False, allow_null=True)
+    settings = UserSettingsSerializer(required=False, allow_null=True)
 
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'date_joined', 'profile', 'settings']
         read_only_fields = ['id', 'username', 'email', 'is_active', 'date_joined']
 
+    def to_representation(self, instance):
+        """Переопределяем для обеспечения наличия профиля и настроек"""
+        representation = super().to_representation(instance)
+        
+        # Убеждаемся, что профиль существует
+        if not representation.get('profile'):
+            try:
+                profile = instance.profile
+                representation['profile'] = UserProfileSerializer(profile).data
+            except UserProfile.DoesNotExist:
+                # Создаем пустой профиль если его нет
+                profile = UserProfile.objects.get_or_create(user=instance)[0]
+                representation['profile'] = UserProfileSerializer(profile).data
+        
+        # Убеждаемся, что настройки существуют
+        if not representation.get('settings'):
+            try:
+                settings = instance.settings
+                representation['settings'] = UserSettingsSerializer(settings).data
+            except UserSettings.DoesNotExist:
+                # Создаем настройки по умолчанию если их нет
+                settings = UserSettings.objects.get_or_create(user=instance)[0]
+                representation['settings'] = UserSettingsSerializer(settings).data
+        
+        return representation
+
     def update(self, instance, validated_data):
         # Извлекаем данные профиля и настроек
-        profile_data = validated_data.pop('profile', {})
-        settings_data = validated_data.pop('settings', {})
+        profile_data = validated_data.pop('profile', None)
+        settings_data = validated_data.pop('settings', None)
 
         # Обновляем основные поля пользователя
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Обновляем профиль пользователя
-        if profile_data:
-            profile_obj, created = UserProfile.objects.update_or_create(
-                user=instance,
-                defaults=profile_data
-            )
+        # Обновляем профиль пользователя только если переданы данные
+        # И только обновляем переданные поля, не очищая существующие
+        if profile_data is not None:
+            # Получаем существующий профиль или создаем новый
+            profile_obj, created = UserProfile.objects.get_or_create(user=instance)
+            
+            # Обновляем только переданные поля, не очищая остальные
+            for key, value in profile_data.items():
+                if value is not None and value != '':  # Не обновляем пустые значения
+                    setattr(profile_obj, key, value)
+            profile_obj.save()
+            
             # Обновляем профиль в памяти instance
             instance.profile = profile_obj
 
-        # Обновляем настройки пользователя
-        if settings_data:
-            settings_obj, created = UserSettings.objects.update_or_create(
-                user=instance,
-                defaults=settings_data
-            )
+        # Обновляем настройки пользователя только если переданы данные
+        if settings_data is not None:
+            # Получаем существующие настройки или создаем новые
+            settings_obj, created = UserSettings.objects.get_or_create(user=instance)
+            
+            # Обновляем только переданные поля
+            for key, value in settings_data.items():
+                if value is not None:
+                    setattr(settings_obj, key, value)
+            settings_obj.save()
+            
             # Обновляем настройки в памяти instance
             instance.settings = settings_obj
 
@@ -277,6 +505,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         username_value = attrs.get(self.username_field)
+        user = None
+        
         if username_value:
             normalized = username_value.strip()
             if '@' in normalized:
@@ -292,19 +522,85 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 except User.DoesNotExist:
                     attrs[self.username_field] = normalized
 
-        data = super().validate(attrs)
+        # Проверяем, есть ли у пользователя пароль
+        if user:
+            if not user.has_usable_password():
+                # У пользователя нет пароля (создан через Google OAuth или другой способ)
+                from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                error = AuthenticationFailed(
+                    'Для этого аккаунта не установлен пароль. Пожалуйста, войдите через Google или установите пароль через восстановление пароля.',
+                    code='no_password'
+                )
+                error.detail = {
+                    'detail': 'Для этого аккаунта не установлен пароль. Пожалуйста, войдите через Google или установите пароль через восстановление пароля.',
+                    'code': 'no_password',
+                    'email': user.email,
+                    'use_google_login': True
+                }
+                raise error
+            
+            # Проверяем, неактивен ли пользователь перед валидацией
+            if not user.is_active:
+                password = attrs.get('password')
+                if password and user.check_password(password):
+                    # Пароль правильный, но пользователь неактивен - требуем подтверждения email
+                    from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                    error = AuthenticationFailed(
+                        'Учетная запись не активирована. Пожалуйста, подтвердите email для активации.',
+                        code='email_not_verified'
+                    )
+                    # Добавляем дополнительные данные в объект ошибки
+                    error.detail = {
+                        'detail': 'Учетная запись не активирована. Пожалуйста, подтвердите email для активации.',
+                        'code': 'email_not_verified',
+                        'email': user.email,
+                        'requires_verification': True
+                    }
+                    raise error
 
-        # Добавляем информацию о пользователе в ответ
+        try:
+            data = super().validate(attrs)
+        except Exception as e:
+            # Если ошибка связана с неактивным пользователем, даем более понятное сообщение
+            if user and not user.is_active:
+                from rest_framework_simplejwt.exceptions import AuthenticationFailed
+                error = AuthenticationFailed(
+                    'Учетная запись не активирована. Пожалуйста, подтвердите email для активации.',
+                    code='email_not_verified'
+                )
+                # Добавляем дополнительные данные в объект ошибки
+                error.detail = {
+                    'detail': 'Учетная запись не активирована. Пожалуйста, подтвердите email для активации.',
+                    'code': 'email_not_verified',
+                    'email': user.email,
+                    'requires_verification': True
+                }
+                raise error
+            raise
+
+        # Добавляем полную информацию о пользователе в ответ через UserSerializer
         user = self.user
-        data['user'] = {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-        }
+        
+        # Убеждаемся, что профиль и настройки существуют
+        UserProfile.objects.get_or_create(user=user)
+        UserSettings.objects.get_or_create(user=user)
+        
+        # Обновляем объект пользователя из БД для получения свежих данных профиля
+        user.refresh_from_db()
+        try:
+            user.profile.refresh_from_db()
+        except UserProfile.DoesNotExist:
+            pass
+        try:
+            user.settings.refresh_from_db()
+        except UserSettings.DoesNotExist:
+            pass
+        
+        # Используем UserSerializer для получения полных данных включая профиль
+        user_serializer = UserSerializer(user)
+        data['user'] = user_serializer.data
 
-        # Добавляем настройки пользователя
+        # Добавляем настройки пользователя (для обратной совместимости)
         try:
             settings = user.settings
             data['settings'] = {
@@ -322,6 +618,67 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return data
 
 # Сериализаторы для магазина
+
+
+class LoyaltyTransactionSerializer(serializers.ModelSerializer):
+    """История транзакций лояльности"""
+    order_id = serializers.IntegerField(source='order.id', read_only=True)
+
+    class Meta:
+        model = LoyaltyTransaction
+        fields = ['id', 'transaction_type', 'points', 'description', 'balance_after', 'order_id', 'created_at']
+        read_only_fields = fields
+
+
+class LoyaltyAccountSerializer(serializers.ModelSerializer):
+    """Счет лояльности пользователя"""
+    max_redeem_per_order = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LoyaltyAccount
+        fields = ['balance', 'lifetime_earned', 'lifetime_redeemed', 'tier', 'max_redeem_per_order', 'updated_at']
+        read_only_fields = fields
+
+    def get_max_redeem_per_order(self, obj):
+        # Глобальный лимит: не более 20% от суммы корзины, но без суммы корзины возвращаем общий лимит по балансу
+        return obj.balance
+
+
+class PromotionSerializer(serializers.ModelSerializer):
+    perfumes = PerfumeListSerializer(many=True, read_only=True)
+    pigments = PigmentListSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Promotion
+        fields = [
+            'id',
+            'title',
+            'promo_type',
+            'slot',
+            'priority',
+            'active',
+            'start_at',
+            'end_at',
+            'discount_percentage',
+            'discount_price',
+            'brand',
+            'category',
+            'perfumes',
+            'pigments',
+            'apply_prices',
+        ]
+
+
+class TrendingProductSerializer(serializers.Serializer):
+    """Упрощенный сериализатор трендовых товаров (возвращает product payload)."""
+    id = serializers.IntegerField(read_only=True)
+    product_type = serializers.CharField(read_only=True)
+    product = serializers.SerializerMethodField()
+
+    def get_product(self, obj: TrendingProduct):
+        prod = obj.product()
+        return serialize_product_payload(prod)
+
 
 class CartItemSerializer(serializers.ModelSerializer):
     """Сериализатор для элемента корзины"""
@@ -469,28 +826,35 @@ class OrderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ['id', 'user', 'status', 'payment_method', 'delivery_address',
-                 'delivery_city', 'delivery_postal_code', 'delivery_phone',
-                 'subtotal', 'delivery_cost', 'total', 'items', 'created_at',
-                 'updated_at', 'paid_at', 'shipped_at', 'delivered_at',
-                 'customer_notes', 'admin_notes']
+        fields = [
+            'id', 'user', 'status', 'payment_method', 'delivery_address',
+            'delivery_city', 'delivery_postal_code', 'delivery_phone',
+            'subtotal', 'delivery_cost', 'loyalty_discount',
+            'loyalty_points_used', 'loyalty_points_earned', 'total',
+            'items', 'created_at', 'updated_at', 'paid_at', 'shipped_at',
+            'delivered_at', 'customer_notes', 'admin_notes'
+        ]
         read_only_fields = ['id', 'user', 'subtotal', 'total', 'created_at',
-                           'updated_at', 'paid_at', 'shipped_at', 'delivered_at']
+                           'updated_at', 'paid_at', 'shipped_at', 'delivered_at',
+                           'loyalty_points_earned']
 
 class OrderCreateSerializer(serializers.ModelSerializer):
     """Сериализатор для создания заказа"""
     items = serializers.ListField(write_only=True, required=False)
     delivery_method = serializers.CharField(required=False, allow_blank=True)
+    loyalty_points = serializers.IntegerField(required=False, min_value=0, default=0)
 
     class Meta:
         model = Order
         fields = ['payment_method', 'delivery_address', 'delivery_city',
                  'delivery_postal_code', 'delivery_phone', 'delivery_method',
-                 'delivery_cost', 'customer_notes', 'items']
+                 'delivery_cost', 'customer_notes', 'items', 'loyalty_points']
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', None)
+        loyalty_points_requested = validated_data.pop('loyalty_points', 0) or 0
         user = self.context['request'].user
+        validated_data['user'] = user
 
         # Если items не указаны, берем все из корзины
         if items_data is None:
@@ -503,71 +867,110 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         if not items_data:
             raise serializers.ValidationError("Заказ не может быть пустым")
 
-        # Создаем заказ
-        subtotal = 0
-        order_items = []
+        with transaction.atomic():
+            account, _ = LoyaltyAccount.objects.select_for_update().get_or_create(user=user)
 
-        # Вычисляем сумму и создаем позиции заказа
-        for item_data in items_data:
-            # Поддерживаем два формата: с cart_item_id и с объектом cart_item
-            if 'cart_item' in item_data:
-                cart_item = item_data['cart_item']
-                quantity = item_data['quantity']
-            else:
-                cart_item_id = item_data.get('cart_item_id')
-                quantity = item_data.get('quantity', 1)
+            # Создаем заказ
+            subtotal = Decimal('0')
+            order_items = []
+
+            # Вычисляем сумму и создаем позиции заказа
+            for item_data in items_data:
+                # Поддерживаем два формата: с cart_item_id и с объектом cart_item
+                if 'cart_item' in item_data:
+                    cart_item = item_data['cart_item']
+                    quantity = item_data['quantity']
+                else:
+                    cart_item_id = item_data.get('cart_item_id')
+                    quantity = item_data.get('quantity', 1)
+                    
+                    try:
+                        cart_item = CartItem.objects.get(id=cart_item_id, cart__user=user)
+                    except CartItem.DoesNotExist:
+                        raise serializers.ValidationError(f"Элемент корзины {cart_item_id} не найден")
+
+                if quantity > cart_item.quantity:
+                    raise serializers.ValidationError(f"Недостаточно товара {cart_item.product.name}")
                 
-                try:
-                    cart_item = CartItem.objects.get(id=cart_item_id, cart__user=user)
-                except CartItem.DoesNotExist:
-                    raise serializers.ValidationError(f"Элемент корзины {cart_item_id} не найден")
+                # Проверяем наличие на складе
+                product = cart_item.product
+                if not product.in_stock:
+                    raise serializers.ValidationError(f"Товар {product.name} нет в наличии")
+                
+                if product.stock_quantity < quantity:
+                    raise serializers.ValidationError(
+                        f"Товар {product.name}: недостаточно на складе (доступно: {product.stock_quantity})"
+                    )
 
-            if quantity > cart_item.quantity:
-                raise serializers.ValidationError(f"Недостаточно товара {cart_item.product.name}")
-            
-            # Проверяем наличие на складе
-            product = cart_item.product
-            if not product.in_stock:
-                raise serializers.ValidationError(f"Товар {product.name} нет в наличии")
-            
-            if product.stock_quantity < quantity:
-                raise serializers.ValidationError(
-                    f"Товар {product.name}: недостаточно на складе (доступно: {product.stock_quantity})"
+                # Создаем позицию заказа
+                order_item = OrderItem(
+                    perfume=cart_item.perfume,
+                    pigment=cart_item.pigment,
+                    product_name=cart_item.product.name,
+                    product_sku=getattr(cart_item.product, 'sku', ''),
+                    quantity=quantity,
+                    unit_price=cart_item.unit_price,
+                    total_price=cart_item.unit_price * quantity
                 )
+                order_items.append((order_item, cart_item, product))
+                subtotal += order_item.total_price
 
-            # Создаем позицию заказа
-            order_item = OrderItem(
-                perfume=cart_item.perfume,
-                pigment=cart_item.pigment,
-                product_name=cart_item.product.name,
-                product_sku=getattr(cart_item.product, 'sku', ''),
-                quantity=quantity,
-                unit_price=cart_item.unit_price,
-                total_price=cart_item.unit_price * quantity
+            # Ограничение на списание баллов: не более 20% от суммы товаров
+            max_redeem_allowed = int((subtotal * Decimal('0.20')).quantize(Decimal('1'), rounding=ROUND_DOWN))
+            points_to_use = max(0, min(loyalty_points_requested, account.balance, max_redeem_allowed))
+            loyalty_discount = Decimal(points_to_use)
+
+            # Резервируем баллы сразу, чтобы исключить двойное использование
+            if points_to_use > 0:
+                account.balance -= points_to_use
+                account.lifetime_redeemed += points_to_use
+                account.save(update_fields=['balance', 'lifetime_redeemed', 'updated_at'])
+
+            # Устанавливаем правильный статус в зависимости от способа оплаты
+            payment_method = validated_data.get('payment_method', 'card')
+            if payment_method == 'cash':
+                # Для оплаты наличными заказ сразу переходит в обработку
+                validated_data['status'] = 'processing'
+            elif payment_method in ['yookassa', 'tinkoff', 'card', 'transfer']:
+                # Для онлайн оплаты заказ ждет оплаты
+                validated_data['status'] = 'pending'
+
+            # Создаем заказ
+            order = Order.objects.create(
+                subtotal=subtotal,
+                loyalty_discount=loyalty_discount,
+                loyalty_points_used=points_to_use,
+                **validated_data
             )
-            order_items.append((order_item, cart_item, product))
-            subtotal += order_item.total_price
 
-        # Создаем заказ
-        order = Order.objects.create(user=user, subtotal=subtotal, **validated_data)
+            # Сохраняем позиции заказа и обновляем остатки
+            for order_item, cart_item, product in order_items:
+                order_item.order = order
+                order_item.save()
+                
+                # Уменьшаем количество на складе
+                product.stock_quantity -= order_item.quantity
+                if product.stock_quantity == 0:
+                    product.in_stock = False
+                product.save()
+                
+                # Уменьшаем количество в корзине
+                cart_item.quantity -= order_item.quantity
+                if cart_item.quantity <= 0:
+                    cart_item.delete()
+                else:
+                    cart_item.save()
 
-        # Сохраняем позиции заказа и обновляем остатки
-        for order_item, cart_item, product in order_items:
-            order_item.order = order
-            order_item.save()
-            
-            # Уменьшаем количество на складе
-            product.stock_quantity -= order_item.quantity
-            if product.stock_quantity == 0:
-                product.in_stock = False
-            product.save()
-            
-            # Уменьшаем количество в корзине
-            cart_item.quantity -= order_item.quantity
-            if cart_item.quantity <= 0:
-                cart_item.delete()
-            else:
-                cart_item.save()
+            # Фиксируем транзакцию по списанию баллов
+            if points_to_use > 0:
+                LoyaltyTransaction.objects.create(
+                    user=user,
+                    order=order,
+                    transaction_type='redeem',
+                    points=-points_to_use,
+                    description=f'Списание баллов на заказ #{order.id}',
+                    balance_after=account.balance,
+                )
 
         # Отправляем email подтверждение
         from .emails import send_order_confirmation

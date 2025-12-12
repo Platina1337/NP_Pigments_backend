@@ -1,0 +1,127 @@
+{% if perfumes or pigments %}
+
+    {% if perfumes %}
+    <div class="products-section">
+        <div class="products-section-header">
+            <div class="products-section-title">
+                <span>🧴</span>
+                Парфюмы
+                <span class="products-section-count">({{ perfumes|length }})</span>
+            </div>
+            <label class="select-all-toggle">
+                <span>Выбрать все парфюмы</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-perfume" onchange="toggleSection('perfume')">
+                    <span class="toggle-slider"></span>
+                </label>
+            </label>
+        </div>
+        
+        <div class="product-grid-improved">
+            {% for item in perfumes %}
+            <div class="product-card-improved {% if item.is_on_sale %}has-discount{% endif %}" 
+                 data-type="perfume" 
+                 data-id="{{ item.id }}" 
+                 data-value="perfume:{{ item.id }}"
+                 data-price="{{ item.price }}">
+                <div class="product-card-main">
+                    <div class="product-card-image">
+                        {% if item.image %}
+                        <img src="{{ item.image.url }}" alt="{{ item.name }}" loading="lazy">
+                        {% else %}
+                        🧴
+                        {% endif %}
+                    </div>
+                    <div class="product-card-details">
+                        <h5 class="product-card-name" title="{{ item.name }}">{{ item.name }}</h5>
+                        <p class="product-card-meta">{{ item.brand.name }}</p>
+                        {% if item.category %}
+                        <p class="product-card-meta">{{ item.category.name }}</p>
+                        {% endif %}
+                        <div class="product-card-price">
+                            {% if item.is_on_sale %}
+                            <span class="product-card-current-price">{{ item.get_discounted_price|floatformat:0 }} ₽</span>
+                            <span class="product-card-original-price">{{ item.price|floatformat:0 }} ₽</span>
+                            {% if item.discount_percentage %}
+                            <span class="product-card-discount-badge">-{{ item.discount_percentage }}%</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="product-card-current-price">{{ item.price|floatformat:0 }} ₽</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    
+    {% if perfumes and pigments %}
+    <div class="section-divider"></div>
+    {% endif %}
+    
+    {% if pigments %}
+    <div class="products-section">
+        <div class="products-section-header">
+            <div class="products-section-title">
+                <span>🎨</span>
+                Пигменты
+                <span class="products-section-count">({{ pigments|length }})</span>
+            </div>
+            <label class="select-all-toggle">
+                <span>Выбрать все пигменты</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-pigment" onchange="toggleSection('pigment')">
+                    <span class="toggle-slider"></span>
+                </label>
+            </label>
+        </div>
+        
+        <div class="product-grid-improved">
+            {% for item in pigments %}
+            <div class="product-card-improved {% if item.is_on_sale %}has-discount{% endif %}" 
+                 data-type="pigment" 
+                 data-id="{{ item.id }}" 
+                 data-value="pigment:{{ item.id }}"
+                 data-price="{{ item.price }}">
+                <div class="product-card-main">
+                    <div class="product-card-image">
+                        {% if item.image %}
+                        <img src="{{ item.image.url }}" alt="{{ item.name }}" loading="lazy">
+                        {% else %}
+                        🎨
+                        {% endif %}
+                    </div>
+                    <div class="product-card-details">
+                        <h5 class="product-card-name" title="{{ item.name }}">{{ item.name }}</h5>
+                        <p class="product-card-meta">{{ item.brand.name }}</p>
+                        {% if item.category %}
+                        <p class="product-card-meta">{{ item.category.name }}</p>
+                        {% endif %}
+                        <div class="product-card-price">
+                            {% if item.is_on_sale %}
+                            <span class="product-card-current-price">{{ item.get_discounted_price|floatformat:0 }} ₽</span>
+                            <span class="product-card-original-price">{{ item.price|floatformat:0 }} ₽</span>
+                            {% if item.discount_percentage %}
+                            <span class="product-card-discount-badge">-{{ item.discount_percentage }}%</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="product-card-current-price">{{ item.price|floatformat:0 }} ₽</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+{% else %}
+<div class="empty-state">
+    <div class="empty-state-icon">📦</div>
+    <div class="empty-state-title">Товары не найдены</div>
+    <p>Попробуйте изменить параметры фильтрации</p>
+</div>
+{% endif %}
