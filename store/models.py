@@ -165,29 +165,54 @@ class Perfume(models.Model):
 
     @property
     def min_price(self):
-        """Returns minimum price across all volume options"""
+        """Returns minimum price across all volume options and base price"""
+        prices = [self.get_discounted_price()]  # Base price
         options = self.volume_options.filter(in_stock=True)
         if options.exists():
-            return min(opt.get_discounted_price() for opt in options)
-        return self.get_discounted_price()
+            prices.extend([opt.get_discounted_price() for opt in options])
+        return min(prices)
 
     @property
     def max_price(self):
-        """Returns maximum price across all volume options"""
+        """Returns maximum price across all volume options and base price"""
+        prices = [self.get_discounted_price()]  # Base price
         options = self.volume_options.filter(in_stock=True)
         if options.exists():
-            return max(opt.get_discounted_price() for opt in options)
-        return self.get_discounted_price()
+            prices.extend([opt.get_discounted_price() for opt in options])
+        return max(prices)
 
     @property
     def has_multiple_volumes(self):
-        """Check if product has multiple volume options"""
-        return self.volume_options.count() > 1
+        """Check if product has volume options (not including base volume)"""
+        return self.volume_options.exists()
+
+    @property
+    def available_volumes(self):
+        """Returns all available volume options including base volume"""
+        volumes = [{'volume_ml': self.volume_ml, 'price': self.get_discounted_price(), 'is_base': True}]
+        for option in self.volume_options.filter(in_stock=True):
+            volumes.append({
+                'volume_ml': option.volume_ml,
+                'price': option.get_discounted_price(),
+                'is_base': False,
+                'option': option
+            })
+        return sorted(volumes, key=lambda x: x['volume_ml'])
 
     @property
     def default_volume_option(self):
-        """Returns the default volume option or the first one"""
-        return self.volume_options.filter(is_default=True).first() or self.volume_options.first()
+        """Returns the default volume option or base volume"""
+        default_option = self.volume_options.filter(is_default=True).first()
+        if default_option:
+            return default_option
+        # Return base volume as a mock object for consistency
+        return type('BaseVolume', (), {
+            'volume_ml': self.volume_ml,
+            'price': self.price,
+            'get_discounted_price': lambda: self.get_discounted_price(),
+            'is_default': True,
+            'is_base_volume': True
+        })()
 
 
 class VolumeOption(models.Model):
@@ -261,24 +286,15 @@ class VolumeOption(models.Model):
 
 
 @receiver(post_save, sender=VolumeOption)
-def ensure_base_volume_option(sender, instance, created, **kwargs):
+def ensure_default_volume_option(sender, instance, created, **kwargs):
     """
-    When the first volume option is added, if it's different from the base volume,
-    create a volume option for the base volume to ensure it's not lost.
+    Ensure only one volume option is marked as default
     """
-    if created:
-        perfume = instance.perfume
-        # Check if this is the first option (or close to it) and base volume is not represented
-        if perfume.volume_options.count() == 1 and instance.volume_ml != perfume.volume_ml:
-            # Create option for base volume
-            VolumeOption.objects.create(
-                perfume=perfume,
-                volume_ml=perfume.volume_ml,
-                price=perfume.price,
-                stock_quantity=perfume.stock_quantity,
-                in_stock=perfume.in_stock,
-                is_default=True # Make base volume default to preserve behavior
-            )
+    if instance.is_default:
+        VolumeOption.objects.filter(
+            perfume=instance.perfume,
+            is_default=True
+        ).exclude(pk=instance.pk).update(is_default=False)
 
 
 class Pigment(models.Model):
@@ -989,7 +1005,7 @@ class CartItem(models.Model):
             return self.volume_option.get_discounted_price()
         if self.weight_option:
             return self.weight_option.get_discounted_price()
-        # Fall back to product price
+        # Fall back to product price (base volume/weight)
         product = self.product
         if not product:
             return Decimal('0')
