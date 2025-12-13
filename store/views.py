@@ -41,6 +41,8 @@ from .models import (
     WishlistItem,
     LoyaltyAccount,
     LoyaltyTransaction,
+    VolumeOption,
+    WeightOption,
 )
 from .serializers import (
     BrandSerializer, CategorySerializer,
@@ -573,13 +575,81 @@ class CartItemViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def add_product(self, request):
         """Добавить продукт в корзину"""
+        logger = logging.getLogger(__name__)
+
         product_type = request.data.get('product_type')  # 'perfume' или 'pigment'
         product_id = request.data.get('product_id')
         quantity = request.data.get('quantity', 1)
+        volume_option_id = request.data.get('volume_option_id')
+        weight_option_id = request.data.get('weight_option_id')
+
+        logger.info(f"Пользователь {request.user.id} пытается добавить товар: product_type={product_type}, product_id={product_id}, quantity={quantity}, vol={volume_option_id}, wgt={weight_option_id}")
 
         if not product_type or not product_id:
+            logger.warning(f"Пользователь {request.user.id}: отсутствуют обязательные параметры - product_type={product_type}, product_id={product_id}")
             return Response(
                 {'error': 'Необходимо указать product_type и product_id'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Получаем продукт и проверяем его наличие
+        try:
+            if product_type == 'perfume':
+                logger.info(f"Пользователь {request.user.id}: получение парфюма с id={product_id}")
+                product = Perfume.objects.get(id=product_id)
+            elif product_type == 'pigment':
+                logger.info(f"Пользователь {request.user.id}: получение пигмента с id={product_id}")
+                product = Pigment.objects.get(id=product_id)
+            else:
+                logger.error(f"Пользователь {request.user.id}: неверный тип продукта - {product_type}")
+                return Response(
+                    {'error': 'Неверный тип продукта'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except (Perfume.DoesNotExist, Pigment.DoesNotExist):
+            logger.error(f"Пользователь {request.user.id}: продукт типа '{product_type}' с id={product_id} не найден в базе данных")
+            return Response(
+                {'error': 'Продукт не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Обработка вариантов (объем/вес)
+        volume_option = None
+        weight_option = None
+        stock_quantity = product.stock_quantity
+        in_stock = product.in_stock
+        product_name = product.name
+
+        if volume_option_id:
+            try:
+                volume_option = VolumeOption.objects.get(id=volume_option_id, perfume=product)
+                stock_quantity = volume_option.stock_quantity
+                in_stock = volume_option.in_stock
+                product_name = f"{product.name} ({volume_option.volume_ml} мл)"
+            except VolumeOption.DoesNotExist:
+                return Response({'error': 'Указанный вариант объема не найден'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if weight_option_id:
+            try:
+                weight_option = WeightOption.objects.get(id=weight_option_id, pigment=product)
+                stock_quantity = weight_option.stock_quantity
+                in_stock = weight_option.in_stock
+                product_name = f"{product.name} ({weight_option.weight_gr} г)"
+            except WeightOption.DoesNotExist:
+                return Response({'error': 'Указанный вариант веса не найден'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем наличие товара на складе
+        if not in_stock:
+            logger.warning(f"Пользователь {request.user.id}: товар '{product_name}' (id={product_id}) не в наличии (in_stock=False)")
+            return Response(
+                {'error': f'Товар "{product_name}" нет в наличии'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if stock_quantity < quantity:
+            logger.warning(f"Пользователь {request.user.id}: недостаточно товара '{product_name}' на складе (запрошено: {quantity}, доступно: {stock_quantity})")
+            return Response(
+                {'error': f'Товар "{product_name}": недостаточно на складе (доступно: {stock_quantity})'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -587,30 +657,46 @@ class CartItemViewSet(viewsets.ModelViewSet):
         cart, created = Cart.objects.get_or_create(user=request.user)
 
         # Проверяем, существует ли уже такой товар в корзине
-        existing_item = None
-        if product_type == 'perfume':
-            existing_item = CartItem.objects.filter(cart=cart, perfume_id=product_id).first()
-        elif product_type == 'pigment':
-            existing_item = CartItem.objects.filter(cart=cart, pigment_id=product_id).first()
+        existing_item = CartItem.objects.filter(
+            cart=cart,
+            perfume_id=product_id if product_type == 'perfume' else None,
+            pigment_id=product_id if product_type == 'pigment' else None,
+            volume_option=volume_option,
+            weight_option=weight_option
+        ).first()
 
         if existing_item:
+            # Проверяем, что общее количество не превышает доступное на складе
+            new_quantity = existing_item.quantity + quantity
+            if stock_quantity < new_quantity:
+                logger.warning(f"Пользователь {request.user.id}: недостаточно товара '{product_name}' для добавления к существующему в корзине (доступно: {stock_quantity}, в корзине уже: {existing_item.quantity}, пытаемся добавить: {quantity})")
+                return Response(
+                    {'error': f'Товар "{product_name}": недостаточно на складе (доступно: {stock_quantity}, в корзине уже: {existing_item.quantity})'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             # Увеличиваем количество
-            existing_item.quantity += quantity
+            logger.info(f"Пользователь {request.user.id}: обновлено количество товара '{product_name}' в корзине с {existing_item.quantity} до {new_quantity}")
+            existing_item.quantity = new_quantity
             existing_item.save()
             serializer = self.get_serializer(existing_item)
             return Response(serializer.data)
 
-        # Создаем новый элемент корзины
-        item_data = {'quantity': quantity}
-        if product_type == 'perfume':
-            item_data['perfume_id'] = product_id
-        elif product_type == 'pigment':
-            item_data['pigment_id'] = product_id
+        # Создаем новый элемент корзины напрямую
+        logger.info(f"Пользователь {request.user.id}: создан новый элемент корзины для товара '{product_name}' (количество: {quantity})")
+        cart_item = CartItem.objects.create(
+            cart=cart,
+            quantity=quantity,
+            perfume=product if product_type == 'perfume' else None,
+            pigment=product if product_type == 'pigment' else None,
+            volume_option=volume_option,
+            weight_option=weight_option
+        )
 
-        serializer = self.get_serializer(data=item_data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save(cart=cart)
+        # Возвращаем сериализованные данные
+        serializer = self.get_serializer(cart_item)
 
+        logger.info(f"Пользователь {request.user.id}: товар '{product.name}' успешно добавлен в корзину")
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -622,6 +708,20 @@ class CartItemViewSet(viewsets.ModelViewSet):
         if quantity <= 0:
             item.delete()
             return Response({'message': 'Товар удален из корзины'})
+
+        # Проверяем наличие товара на складе
+        product = item.product
+        if not product.in_stock:
+            return Response(
+                {'error': f'Товар "{product.name}" нет в наличии'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if product.stock_quantity < quantity:
+            return Response(
+                {'error': f'Товар "{product.name}": недостаточно на складе (доступно: {product.stock_quantity})'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         item.quantity = quantity
         item.save()
@@ -779,8 +879,46 @@ class OrderViewSet(viewsets.ModelViewSet):
             return OrderCreateSerializer
         return OrderSerializer
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception:
+            logger.warning(
+                'ORDER_CREATE_INVALID user=%s data=%s errors=%s raw_body=%s',
+                request.user,
+                request.data,
+                getattr(serializer, 'errors', None),
+                request.body,
+            )
+            raise
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        logger.info('ORDER_CREATE_OK user=%s order_id=%s', request.user, serializer.instance.id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        try:
+            serializer.save(user=self.request.user)
+        except Exception as exc:
+            # Логируем причину 400/500 при создании заказа
+            try:
+                from django.forms.utils import ErrorDict, ErrorList
+                errors = getattr(exc, 'detail', None) or getattr(exc, 'args', None)
+                # Приводим ошибки в читаемый вид
+                if isinstance(errors, (ErrorDict, ErrorList, dict, list)):
+                    err_repr = str(errors)
+                else:
+                    err_repr = repr(errors)
+            except Exception:
+                err_repr = repr(exc)
+            logger.error(
+                'ORDER_CREATE_SAVE_FAILED user=%s error=%s',
+                self.request.user,
+                err_repr
+            )
+            raise
 
     @action(detail=False, methods=['get'])
     def history(self, request):
@@ -1723,6 +1861,7 @@ def public_theme_settings(request):
 
 from .payment_providers.yookassa import YooKassaProvider
 from .payment_providers.tinkoff import TinkoffProvider
+from .payment_config import payment_urls
 from .emails import send_payment_confirmation, send_order_confirmation, generate_random_password, send_google_password_email
 
 
@@ -1733,6 +1872,7 @@ def create_yookassa_payment(request):
     order_id = request.data.get('order_id')
     
     if not order_id:
+        logger.warning('YOO_CREATE_NO_ORDER_ID user=%s data=%s', request.user, request.data)
         return Response(
             {'error': 'order_id обязателен'},
             status=status.HTTP_400_BAD_REQUEST
@@ -1741,19 +1881,28 @@ def create_yookassa_payment(request):
     try:
         order = Order.objects.get(id=order_id, user=request.user)
     except Order.DoesNotExist:
+        logger.warning('YOO_CREATE_ORDER_NOT_FOUND user=%s order_id=%s', request.user, order_id)
         return Response(
             {'error': 'Заказ не найден'},
             status=status.HTTP_404_NOT_FOUND
         )
     
+    if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
+        logger.error('YOO_CREATE_NO_CREDS user=%s', request.user)
+        return Response(
+            {'error': 'ЮKassa не настроена на сервере'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
     # Формируем URL возврата
-    return_url = request.build_absolute_uri('/payment/callback/')
+    return_url = payment_urls.get_yookassa_return_url(order.id)
     
     # Создаем платеж
     provider = YooKassaProvider()
     result = provider.create_payment(order, return_url)
     
     if result['success']:
+        logger.info('YOO_CREATE_OK user=%s order_id=%s payment_id=%s', request.user, order.id, result['payment_id'])
         # Сохраняем ID платежа
         order.payment_id = result['payment_id']
         order.payment_method = 'yookassa'
@@ -1765,6 +1914,7 @@ def create_yookassa_payment(request):
             'confirmation_url': result['confirmation_url']
         })
     else:
+        logger.error('YOO_CREATE_FAILED user=%s order_id=%s error=%s', request.user, order.id, result.get('error'))
         return Response(
             {'error': result.get('error', 'Ошибка создания платежа')},
             status=status.HTTP_400_BAD_REQUEST
@@ -1778,25 +1928,65 @@ def yookassa_webhook(request):
     """Обработка webhook от ЮKassa"""
     provider = YooKassaProvider()
     result = provider.handle_webhook(request.data)
-    
+
     if result['success'] and result.get('order_id'):
         try:
             order = Order.objects.get(id=result['order_id'])
-            
-            # Обновляем статус заказа
+
+            # Обновляем статус заказа независимо от payment_method
             if result['status'] == 'succeeded' and result.get('paid'):
                 from django.utils import timezone
                 order.status = 'paid'
                 order.paid_at = timezone.now()
                 order.save()
-                
+
                 # Отправляем email
                 send_payment_confirmation(order)
-            
+                logger.info('YOO_WEBHOOK_SUCCESS order_id=%s payment_id=%s', order.id, result.get('payment_id'))
+
         except Order.DoesNotExist:
-            pass
-    
+            logger.warning('YOO_WEBHOOK_ORDER_NOT_FOUND order_id=%s', result.get('order_id'))
+        except Exception as e:
+            logger.error('YOO_WEBHOOK_ERROR order_id=%s error=%s', result.get('order_id'), str(e))
+
     return Response({'status': 'ok'})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_payment_config(request):
+    """Получить текущую конфигурацию платежных URL-адресов"""
+    return Response(payment_urls.get_config_summary())
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def update_payment_config(request):
+    """
+    Обновить конфигурацию платежных URL-адресов
+    Требуется для быстрого переключения между тестовым и продакшен окружениями
+    """
+    data = request.data
+
+    # Обновляем URL фронтенда
+    if 'frontend_url' in data:
+        payment_urls.update_frontend_url(data['frontend_url'])
+
+    # Обновляем webhook URL'ы
+    webhook_updates = {}
+    if 'yookassa_webhook_url' in data:
+        webhook_updates['yookassa_url'] = data['yookassa_webhook_url']
+    if 'tinkoff_webhook_url' in data:
+        webhook_updates['tinkoff_url'] = data['tinkoff_webhook_url']
+
+    if webhook_updates:
+        payment_urls.update_webhook_urls(**webhook_updates)
+
+    return Response({
+        'success': True,
+        'message': 'Конфигурация обновлена',
+        'config': payment_urls.get_config_summary()
+    })
 
 
 @api_view(['GET'])
@@ -1840,8 +2030,8 @@ def create_tinkoff_payment(request):
         )
     
     # Формируем URL'ы
-    success_url = request.build_absolute_uri('/payment/success/')
-    fail_url = request.build_absolute_uri('/payment/failed/')
+    success_url = payment_urls.get_tinkoff_success_url()
+    fail_url = payment_urls.get_tinkoff_fail_url()
     
     # Создаем платеж
     provider = TinkoffProvider()
@@ -1869,27 +2059,49 @@ def create_tinkoff_payment(request):
 @permission_classes([AllowAny])
 @authentication_classes([])
 def tinkoff_notification(request):
-    """Обработка уведомлений от Тинькофф"""
-    provider = TinkoffProvider()
-    result = provider.handle_notification(request.data)
-    
+    """Обработка уведомлений от Тинькофф (или YooKassa через Tinkoff)"""
+    # Проверяем, это YooKassa данные или Tinkoff
+    data = request.data
+    result = None
+
+    if 'type' in data and data.get('type') == 'notification' and 'event' in data and 'object' in data:
+        # Это YooKassa webhook данные
+        payment_obj = data.get('object', {})
+        metadata = payment_obj.get('metadata', {})
+
+        result = {
+            'success': True,
+            'payment_id': payment_obj.get('id'),
+            'status': 'CONFIRMED',  # YooKassa 'succeeded' = Tinkoff 'CONFIRMED'
+            'order_id': metadata.get('order_id'),
+            'amount': float(payment_obj.get('amount', {}).get('value', 0)),
+            'success_payment': payment_obj.get('paid', False) and payment_obj.get('status') == 'succeeded'
+        }
+    else:
+        # Это стандартные Tinkoff данные
+        provider = TinkoffProvider()
+        result = provider.handle_notification(request.data)
+
     if result['success'] and result.get('order_id'):
         try:
             order = Order.objects.get(id=result['order_id'])
-            
-            # Обновляем статус заказа
+
+            # Обновляем статус заказа независимо от payment_method
             if result['status'] == 'CONFIRMED' and result.get('success_payment'):
                 from django.utils import timezone
                 order.status = 'paid'
                 order.paid_at = timezone.now()
                 order.save()
-                
+
                 # Отправляем email
                 send_payment_confirmation(order)
-            
+                logger.info('PAYMENT_WEBHOOK_SUCCESS order_id=%s payment_id=%s', order.id, result.get('payment_id'))
+
         except Order.DoesNotExist:
-            pass
-    
+            logger.warning('PAYMENT_WEBHOOK_ORDER_NOT_FOUND order_id=%s', result.get('order_id'))
+        except Exception as e:
+            logger.error('PAYMENT_WEBHOOK_ERROR order_id=%s error=%s', result.get('order_id'), str(e))
+
     return Response('OK')
 
 
@@ -2285,7 +2497,9 @@ def sync_cart(request):
     # Создаем словарь текущих элементов корзины для быстрого поиска
     existing_items = {}
     for item in cart.items.all():
-        key = f"{item.product_type}-{item.product.id}"
+        vol_key = f"vol-{item.volume_option_id or 'base'}"
+        wgt_key = f"wgt-{item.weight_option_id or 'base'}"
+        key = f"{item.product_type}-{item.product.id}-{vol_key}-{wgt_key}"
         existing_items[key] = item
 
     # Обрабатываем товары из запроса
@@ -2293,19 +2507,70 @@ def sync_cart(request):
         product_type = item_data.get('product_type')  # 'perfume' или 'pigment'
         product_id = item_data.get('product_id')
         quantity = item_data.get('quantity', 1)
+        volume_option_id = item_data.get('volume_option_id')
+        weight_option_id = item_data.get('weight_option_id')
 
-        print(f"Processing item: type={product_type}, id={product_id}, qty={quantity}")
+        print(f"Processing item: type={product_type}, id={product_id}, qty={quantity}, vol={volume_option_id}, wgt={weight_option_id}")
 
-        key = f"{product_type}-{product_id}"
+        vol_key = f"vol-{volume_option_id or 'base'}"
+        wgt_key = f"wgt-{weight_option_id or 'base'}"
+        key = f"{product_type}-{product_id}-{vol_key}-{wgt_key}"
 
         if key in existing_items:
             # Обновляем количество существующего товара
             existing_item = existing_items[key]
             print(f"Updating existing item {existing_item.id}, old qty: {existing_item.quantity}, new qty: {quantity}")
-            existing_item.quantity = quantity
+
+            # Проверяем наличие товара на складе перед обновлением
+            product = existing_item.product
+            selected_volume = None
+            selected_weight = None
+
+            if volume_option_id:
+                try:
+                    selected_volume = VolumeOption.objects.get(id=volume_option_id, perfume_id=product_id)
+                except VolumeOption.DoesNotExist:
+                    print(f"Volume option {volume_option_id} not found for product {product_id}")
+                    continue
+
+            if weight_option_id:
+                try:
+                    selected_weight = WeightOption.objects.get(id=weight_option_id, pigment_id=product_id)
+                except WeightOption.DoesNotExist:
+                    print(f"Weight option {weight_option_id} not found for product {product_id}")
+                    continue
+
+            available_stock = (
+                selected_volume.stock_quantity if selected_volume else
+                selected_weight.stock_quantity if selected_weight else
+                product.stock_quantity
+            )
+            in_stock = (
+                selected_volume.in_stock if selected_volume else
+                selected_weight.in_stock if selected_weight else
+                product.in_stock
+            )
+
+            if not in_stock:
+                print(f"Product {product.name} is not in stock - removing from cart")
+                existing_item.delete()
+                del existing_items[key]
+                continue
+
+            if available_stock < quantity:
+                print(f"Product {product.name} has insufficient stock ({available_stock} < {quantity}) - adjusting quantity")
+                existing_item.quantity = available_stock
+            else:
+                existing_item.quantity = quantity
+
+            # Проставляем вариант, если он изменился
+            if selected_volume or selected_weight:
+                existing_item.volume_option = selected_volume
+                existing_item.weight_option = selected_weight
+
             try:
                 existing_item.save()
-                print(f"Successfully saved item {existing_item.id} with quantity {quantity}")
+                print(f"Successfully saved item {existing_item.id} with quantity {existing_item.quantity}")
             except Exception as e:
                 print(f"Error saving item {existing_item.id}: {e}")
             del existing_items[key]  # Удаляем из словаря обработанных
@@ -2315,16 +2580,36 @@ def sync_cart(request):
             if product_type == 'perfume':
                 try:
                     perfume = Perfume.objects.get(id=product_id)
-                    print(f"Found perfume: {perfume.name}")
+                    selected_volume = None
+
+                    if volume_option_id:
+                        try:
+                            selected_volume = VolumeOption.objects.get(id=volume_option_id, perfume=perfume)
+                            print(f"Using volume option {selected_volume.id} ({selected_volume.volume_ml} мл) with stock {selected_volume.stock_quantity} / in_stock={selected_volume.in_stock}")
+                        except VolumeOption.DoesNotExist as e:
+                            print(f"Volume option {volume_option_id} not found for perfume {product_id}: {e}")
+                            continue
+
+                    # Проверяем наличие товара на складе
+                    in_stock = selected_volume.in_stock if selected_volume else perfume.in_stock
+                    stock_qty = selected_volume.stock_quantity if selected_volume else perfume.stock_quantity
+                    if not in_stock:
+                        print(f"Perfume {perfume.name} is not in stock (variant checked) - skipping")
+                        continue
+                    if stock_qty < quantity:
+                        print(f"Perfume {perfume.name} has insufficient stock ({stock_qty} < {quantity}) - skipping")
+                        continue
+
                     new_item = CartItem.objects.create(
                         cart=cart,
                         perfume=perfume,
+                        volume_option=selected_volume,
                         quantity=quantity
                     )
                     print(f"Created cart item: {new_item.id}")
                     # Проверяем, что элемент действительно сохранен
                     saved_item = CartItem.objects.get(id=new_item.id)
-                    print(f"Verified saved item: {saved_item.id}, qty: {saved_item.quantity}")
+                    print(f"Verified saved item: {saved_item.id}, qty: {saved_item.quantity}, vol={saved_item.volume_option_id}")
                 except Perfume.DoesNotExist as e:
                     print(f"Perfume {product_id} not found: {e}")
                     pass
@@ -2333,10 +2618,30 @@ def sync_cart(request):
             elif product_type == 'pigment':
                 try:
                     pigment = Pigment.objects.get(id=product_id)
-                    print(f"Found pigment: {pigment.name}")
+                    selected_weight = None
+
+                    if weight_option_id:
+                        try:
+                            selected_weight = WeightOption.objects.get(id=weight_option_id, pigment=pigment)
+                            print(f"Using weight option {selected_weight.id} ({selected_weight.weight_gr} г) with stock {selected_weight.stock_quantity} / in_stock={selected_weight.in_stock}")
+                        except WeightOption.DoesNotExist as e:
+                            print(f"Weight option {weight_option_id} not found for pigment {product_id}: {e}")
+                            continue
+
+                    # Проверяем наличие товара на складе
+                    in_stock = selected_weight.in_stock if selected_weight else pigment.in_stock
+                    stock_qty = selected_weight.stock_quantity if selected_weight else pigment.stock_quantity
+                    if not in_stock:
+                        print(f"Pigment {pigment.name} is not in stock - skipping")
+                        continue
+                    if stock_qty < quantity:
+                        print(f"Pigment {pigment.name} has insufficient stock ({stock_qty} < {quantity}) - skipping")
+                        continue
+
                     new_item = CartItem.objects.create(
                         cart=cart,
                         pigment=pigment,
+                        weight_option=selected_weight,
                         quantity=quantity
                     )
                     print(f"Created cart item: {new_item.id}")

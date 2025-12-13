@@ -48,12 +48,16 @@ urlpatterns = [
     path('api/auth/google/register/', views.google_oauth_register, name='google-oauth-register'),
     
     # Payment providers
+    path('api/payments/config/', views.get_payment_config, name='get-payment-config'),
+    path('api/payments/config/update/', views.update_payment_config, name='update-payment-config'),
+
     path('api/payments/yookassa/create/', views.create_yookassa_payment, name='create-yookassa-payment'),
     path('api/payments/yookassa/webhook/', views.yookassa_webhook, name='yookassa-webhook'),
     path('api/payments/yookassa/status/<str:payment_id>/', views.check_yookassa_payment_status, name='check-yookassa-payment-status'),
-    
+
     path('api/payments/tinkoff/create/', views.create_tinkoff_payment, name='create-tinkoff-payment'),
     path('api/payments/tinkoff/notification/', views.tinkoff_notification, name='tinkoff-notification'),
+    path('api/payments/tinkoff/webhook/', views.tinkoff_notification, name='tinkoff-webhook'),
     path('api/payments/tinkoff/status/<str:payment_id>/', views.check_tinkoff_payment_status, name='check-tinkoff-payment-status'),
     
     # Delivery providers

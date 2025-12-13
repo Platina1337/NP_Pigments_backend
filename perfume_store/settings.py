@@ -30,7 +30,27 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-)&-!ay%bhopwr2y&+p0uz7((o9
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    host.strip() for host in os.getenv(
+        'ALLOWED_HOSTS',
+        'localhost,127.0.0.1,.ngrok-free.app'
+    ).split(',')
+    if host.strip()
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+
+if not CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost',
+        'http://127.0.0.1',
+        'https://localhost',
+        'https://127.0.0.1',
+        'https://*.ngrok-free.app',
+    ]
 
 
 # Application definition
@@ -165,6 +185,18 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+frontend_url = os.getenv('FRONTEND_URL')
+if frontend_url and frontend_url.startswith(('http://', 'https://')):
+    normalized_frontend = frontend_url.rstrip('/')
+    if normalized_frontend not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(normalized_frontend)
+
+extra_cors = os.getenv('CORS_EXTRA_ORIGINS', '')
+for origin in extra_cors.split(','):
+    origin = origin.strip()
+    if origin and origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(origin)
 
 CORS_ALLOW_CREDENTIALS = True
 

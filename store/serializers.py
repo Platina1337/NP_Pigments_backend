@@ -703,8 +703,42 @@ class CartItemSerializer(serializers.ModelSerializer):
             'total_price',
             'added_at',
             'product_data',
+            'volume_option',
+            'weight_option',
         ]
-        read_only_fields = ['id', 'added_at']
+        read_only_fields = ['id', 'added_at', 'perfume', 'pigment']
+
+    def validate(self, attrs):
+        """Валидация данных элемента корзины"""
+        perfume = attrs.get('perfume')
+        pigment = attrs.get('pigment')
+        quantity = attrs.get('quantity', 1)
+
+        # Определяем продукт
+        product = perfume or pigment
+        if not product:
+            raise serializers.ValidationError("Необходимо указать продукт")
+
+        # Проверяем наличие товара на складе
+        if not product.in_stock:
+            raise serializers.ValidationError(f'Товар "{product.name}" нет в наличии')
+
+        if product.stock_quantity < quantity:
+            raise serializers.ValidationError(
+                f'Товар "{product.name}": недостаточно на складе (доступно: {product.stock_quantity})'
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        """Создание нового элемента корзины"""
+        cart = validated_data.pop('cart', None)
+        if not cart:
+            # Получаем cart из дополнительных аргументов save()
+            cart = self.context.get('cart')
+        if not cart:
+            raise serializers.ValidationError("Необходимо указать корзину")
+        return CartItem.objects.create(cart=cart, **validated_data)
 
     def get_product_name(self, obj):
         return obj.product.name if obj.product else "Товар удален"
@@ -846,15 +880,28 @@ class OrderCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ['payment_method', 'delivery_address', 'delivery_city',
-                 'delivery_postal_code', 'delivery_phone', 'delivery_method',
-                 'delivery_cost', 'customer_notes', 'items', 'loyalty_points']
+        fields = [
+            'id',
+            'payment_method',
+            'delivery_address',
+            'delivery_city',
+            'delivery_postal_code',
+            'delivery_phone',
+            'delivery_method',
+            'delivery_cost',
+            'customer_notes',
+            'items',
+            'loyalty_points',
+        ]
+        read_only_fields = ['id']
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', None)
         loyalty_points_requested = validated_data.pop('loyalty_points', 0) or 0
         user = self.context['request'].user
         validated_data['user'] = user
+
+        logger.info('ORDER_CREATE_START user=%s items_provided=%s payload=%s', user, items_data is not None, validated_data)
 
         # Если items не указаны, берем все из корзины
         if items_data is None:
@@ -903,11 +950,13 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                     )
 
                 # Создаем позицию заказа
+                # Гарантируем непустой SKU, иначе MySQL NOT NULL падает
+                product_sku = getattr(cart_item.product, 'sku', '') or ''
                 order_item = OrderItem(
                     perfume=cart_item.perfume,
                     pigment=cart_item.pigment,
                     product_name=cart_item.product.name,
-                    product_sku=getattr(cart_item.product, 'sku', ''),
+                    product_sku=product_sku,
                     quantity=quantity,
                     unit_price=cart_item.unit_price,
                     total_price=cart_item.unit_price * quantity
